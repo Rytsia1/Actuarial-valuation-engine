@@ -5,7 +5,7 @@ A production-ready Python engine for life insurance liability modeling,
 prospective reserves, and stochastic risk simulation.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from actuary_engine.tables.mortality_table import MortalityTable
 from actuary_engine.tables.commutation import CommutationFunctions
@@ -17,8 +17,12 @@ from actuary_engine.projections.cash_flow import CashFlowProjector
 from actuary_engine.models.assumptions import (
     InterestAssumption,
     MortalityAssumption,
+    ExpenseAssumption,
+    LapseAssumption,
     ValuationAssumptions,
 )
+from actuary_engine.valuation.reserves import ReserveCalculator
+from actuary_engine.valuation.gpv import GrossPremiumValuation
 from actuary_engine.models.contracts import PolicyContract, ProductType
 
 __all__ = [
@@ -32,7 +36,11 @@ __all__ = [
     "CashFlowProjector",
     "InterestAssumption",
     "MortalityAssumption",
+    "ExpenseAssumption",
+    "LapseAssumption",
     "ValuationAssumptions",
     "PolicyContract",
     "ProductType",
+    "ReserveCalculator",
+    "GrossPremiumValuation",
 ]
