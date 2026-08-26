@@ -9,7 +9,7 @@ convexity, DV01), and combined compound macro-stress scenarios.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Optional, TypedDict
 
 import numpy as np
 from pydantic import BaseModel, Field
@@ -24,6 +24,44 @@ from actuary_engine.pricing.premium import LevelPremiumCalculator
 from actuary_engine.tables.commutation import CommutationFunctions
 from actuary_engine.tables.mortality_table import MortalityTable
 from actuary_engine.valuation.gpv import GrossPremiumValuation
+
+
+class TornadoShockDef(TypedDict):
+    """Specification for a one-at-a-time (OAT) parameter sensitivity shock."""
+
+    risk_factor: str
+    category: str
+    low_label: str
+    high_label: str
+    low_kwargs: dict[str, float]
+    high_kwargs: dict[str, float]
+
+
+class ScenarioDef(TypedDict):
+    """Specification for a compound macro stress testing scenario."""
+
+    scenario_id: str
+    name: str
+    description: str
+    rate_shift_bps: float
+    mortality_mult: float
+    lapse_mult: float
+    expense_mult: float
+    eval_kwargs: dict[str, float]
+    solvency_impact: str
+
+
+class SliderTornadoDef(TypedDict):
+    """Specification for an interactive slider risk factor tornado bar."""
+
+    risk_factor: str
+    category: str
+    low_label: str
+    high_label: str
+    low_kwargs: dict[str, float]
+    high_kwargs: dict[str, float]
+    current_label: str
+    current_kwargs: dict[str, float]
 
 
 class SensitivityBaselineMetrics(BaseModel):
@@ -258,7 +296,7 @@ class SensitivityEngine:
         )
 
         # 3. Tornado Shock Definitions
-        shocks_to_run = [
+        shocks_to_run: list[TornadoShockDef] = [
             {
                 "risk_factor": "Discount Rate (±100 bps)",
                 "category": "MARKET",
@@ -372,7 +410,7 @@ class SensitivityEngine:
         v_base = base_res["reserve"]
         abs_base = max(1.0, abs(v_base))
 
-        scenarios_defs = [
+        scenarios_defs: list[ScenarioDef] = [
             {
                 "scenario_id": "stagflation_crisis",
                 "name": "Stagflation Crisis",
@@ -479,10 +517,10 @@ class SensitivityEngine:
             Dictionary payload ready for StressTestResponse serialization.
         """
         # 1. Parse Shocks
-        ir_bps = float(shocks.get("interest_rate_bps", 0.0))
-        mort_mult = float(shocks.get("mortality_multiplier", 1.0))
-        lapse_mult = float(shocks.get("lapse_multiplier", 1.0))
-        exp_infl_pct = float(shocks.get("expense_inflation_pct", 0.0))
+        ir_bps = shocks.get("interest_rate_bps", 0.0)
+        mort_mult = shocks.get("mortality_multiplier", 1.0)
+        lapse_mult = shocks.get("lapse_multiplier", 1.0)
+        exp_infl_pct = shocks.get("expense_inflation_pct", 0.0)
         exp_mult = 1.0 + (exp_infl_pct / 100.0)
 
         # 2. Determine Effective Gross Premium
@@ -505,10 +543,10 @@ class SensitivityEngine:
         v_base = float(cf_base["pv_net_liability"].sum())
         abs_base = max(1.0, abs(v_base))
 
-        # 4. Stressed Assumptions & Trajectory
-        base_rate = getattr(self.interest, "annual_rate", 0.05)
-        shocked_rate = max(0.0001, base_rate + (ir_bps / 10000.0))
-        shocked_interest = InterestAssumption(annual_rate=shocked_rate)
+        # 4. Stressed Valuation & Trajectory
+        # Construct shocked assumptions
+        delta_r = ir_bps / 10000.0  # bps to decimal
+        shocked_interest = InterestAssumption(annual_rate=max(0.0001, self.interest.annual_rate + delta_r))
 
         if mort_mult != 1.0:
             qx_shocked = np.clip(self.table.qx * mort_mult, 0.0, 1.0)
@@ -516,7 +554,7 @@ class SensitivityEngine:
             shocked_table = MortalityTable(
                 ages=self.table.ages,
                 qx=qx_shocked,
-                name=f"{self.table.name}_shocked",
+                name=f"{self.table.name}_stress",
                 radix=self.table.radix,
             )
         else:
@@ -534,10 +572,9 @@ class SensitivityEngine:
 
         if lapse_mult != 1.0:
             if self.lapse.duration_rates is not None:
-                dur_rates = [min(0.95, r * lapse_mult) for r in self.lapse.duration_rates]
                 shocked_lapse = LapseAssumption(
                     flat_annual_rate=min(0.95, self.lapse.flat_annual_rate * lapse_mult),
-                    duration_rates=dur_rates,
+                    duration_rates=[min(0.95, r * lapse_mult) for r in self.lapse.duration_rates],
                 )
             else:
                 shocked_lapse = LapseAssumption(
@@ -559,33 +596,32 @@ class SensitivityEngine:
         delta_res = v_stress - v_base
         delta_pct = (delta_res / abs_base) * 100.0
 
-        # 5. Build Duration-by-Duration Reserve Trajectory
-        trajectory: list[dict[str, Any]] = []
-        n_dur = len(res_base)
-        for t in range(n_dur):
+        # 5. Build Duration-by-Duration Trajectory List
+        reserve_trajectory: list[dict[str, Any]] = []
+        n_durations = min(len(res_base), len(res_stress))
+        for t in range(n_durations):
             dur = int(res_base.iloc[t]["duration"])
             age = int(res_base.iloc[t]["age"])
-            b_r = float(res_base.iloc[t]["gross_reserve"])
-            s_r = float(res_stress.iloc[t]["gross_reserve"]) if t < len(res_stress) else 0.0
-            b_c = float(cf_base.iloc[t]["net_liability_cf"]) if t < len(cf_base) else 0.0
-            s_c = float(cf_stress.iloc[t]["net_liability_cf"]) if t < len(cf_stress) else 0.0
+            b_val = float(res_base.iloc[t]["gross_reserve"])
+            s_val = float(res_stress.iloc[t]["gross_reserve"]) if t < len(res_stress) else 0.0
+            b_cf = float(cf_base.iloc[t]["net_liability_cf"]) if t < len(cf_base) else 0.0
+            s_cf = float(cf_stress.iloc[t]["net_liability_cf"]) if t < len(cf_stress) else 0.0
 
-            trajectory.append({
+            reserve_trajectory.append({
                 "duration": dur,
-                "year": dur,
                 "age": age,
-                "baseline_reserve": round(b_r, 2),
-                "stressed_reserve": round(s_r, 2),
-                "delta_reserve": round(s_r - b_r, 2),
-                "baseline_net_cf": round(b_c, 2),
-                "stressed_net_cf": round(s_c, 2),
+                "baseline_reserve": round(b_val, 2),
+                "stressed_reserve": round(s_val, 2),
+                "delta_reserve": round(s_val - b_val, 2),
+                "baseline_net_cf": round(b_cf, 2),
+                "stressed_net_cf": round(s_cf, 2),
             })
 
         # 6. Compute Key Risk Metrics (Duration & DV01)
         delta_i = 0.01  # 100 bps
         res_plus_i = self.evaluate_point(contract, gross_premium=eff_gp, interest_shift=delta_i)
         res_minus_i = self.evaluate_point(contract, gross_premium=eff_gp, interest_shift=-delta_i)
-        pv_outgo_base = float(cf_base["pv_death_claims"].sum() + cf_base["pv_maturity"].sum() + cf_base["pv_expense"].sum())
+        pv_outgo_base = float(cf_base["pv_death_claims"].sum() + cf_base["pv_maturity"].sum() + cf_base["pv_expense"].sum() + cf_base["pv_lapse_payouts"].sum())
         pv_outgo_plus = res_plus_i["pvfb"] + res_plus_i["pvfe"]
         pv_outgo_minus = res_minus_i["pvfb"] + res_minus_i["pvfe"]
 
@@ -594,7 +630,7 @@ class SensitivityEngine:
         dv01 = abs(pv_outgo_minus - pv_outgo_plus) / 200.0
 
         # 7. Compute Dynamic Tornado Data (OAT Sensitivity for Sliders)
-        tornado_defs = [
+        tornado_defs: list[SliderTornadoDef] = [
             {
                 "risk_factor": "Interest Rate Shift",
                 "category": "MARKET",
@@ -688,6 +724,7 @@ class SensitivityEngine:
                 "lapse_multiplier": lapse_mult,
                 "expense_inflation_pct": exp_infl_pct,
             },
+            "reserve_trajectory": reserve_trajectory,
             "tornado_data": tornado_items,
-            "reserve_trajectory": trajectory,
+            "product_type": contract.product_type.value,
         }

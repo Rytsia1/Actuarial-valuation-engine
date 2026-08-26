@@ -141,7 +141,7 @@ def get_soa_ilt_info() -> dict[str, object]:
     """Retrieve metadata and sample mortality rates for SOA Illustrative Life Table."""
     table = table_registry.get_table("soa_ilt")
     sample_ages = [20, 30, 40, 50, 60, 70, 80, 90, 100]
-    sample_qx = {f"q{age}": round(float(table.get_tqx(age, 1)), 6) for age in sample_ages}
+    sample_qx = {f"q{age}": round(table.get_tqx(age, 1), 6) for age in sample_ages}
     return {
         "name": table.name,
         "min_age": table.min_age,
@@ -650,9 +650,12 @@ async def evaluate_portfolio_csv(
         df = engine.load_portfolio_df(contents)
         res_df, summary = engine.evaluate_portfolio(df)
 
-        sample_records = res_df.head(25)[
-            ["policy_id", "product_type", "issue_age", "policy_duration_years", "term_years", "sum_assured", "gross_premium", "pvfb", "pvfp", "pvfe", "bel"]
-        ].to_dict(orient="records")
+        sample_records: list[dict[str, Any]] = [
+            {str(k): v for k, v in r.items()}
+            for r in res_df.head(25)[
+                ["policy_id", "product_type", "issue_age", "policy_duration_years", "term_years", "sum_assured", "gross_premium", "pvfb", "pvfp", "pvfe", "bel"]
+            ].to_dict(orient="records")
+        ]
 
         return PortfolioValuationResponse(
             total_policies=summary.total_policies,
@@ -700,9 +703,12 @@ def evaluate_portfolio_json(request: PortfolioValuationJSONRequest) -> Portfolio
         df = engine.load_portfolio_df(raw_df)
         res_df, summary = engine.evaluate_portfolio(df)
 
-        sample_records = res_df.head(25)[
-            ["policy_id", "product_type", "issue_age", "policy_duration_years", "term_years", "sum_assured", "gross_premium", "pvfb", "pvfp", "pvfe", "bel"]
-        ].to_dict(orient="records")
+        sample_records: list[dict[str, Any]] = [
+            {str(k): v for k, v in r.items()}
+            for r in res_df.head(25)[
+                ["policy_id", "product_type", "issue_age", "policy_duration_years", "term_years", "sum_assured", "gross_premium", "pvfb", "pvfp", "pvfe", "bel"]
+            ].to_dict(orient="records")
+        ]
 
         return PortfolioValuationResponse(
             total_policies=summary.total_policies,
@@ -862,7 +868,7 @@ def simulate_esg_paths(request: ESGSimulationRequest) -> ESGSimulationResponse:
         else:
             curve = MarketYieldCurve.from_us_treasury()
 
-        n_steps = int(round(request.n_years / request.dt))
+        n_steps = round(request.n_years / request.dt)
         time_grid = np.linspace(0.0, request.n_years, n_steps + 1).round(3).tolist()
 
         feller_ok = None
