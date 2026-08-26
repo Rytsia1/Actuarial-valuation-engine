@@ -373,13 +373,13 @@ class GrossPremiumValuation:
         v = self.interest.discount_factor
         n = len(df)
 
-        death_claims = df["death_claims"].to_numpy(dtype=np.float64)
-        lapse_payouts = df["lapse_payouts"].to_numpy(dtype=np.float64)
-        maturity_benefit = df["maturity_benefit"].to_numpy(dtype=np.float64)
-        total_expense = df["total_expense"].to_numpy(dtype=np.float64)
-        premium_income = df["premium_income"].to_numpy(dtype=np.float64)
-        qx_dep = df["qx_dependent"].to_numpy(dtype=np.float64)
-        wx_dep = df["wx_dependent"].to_numpy(dtype=np.float64)
+        death_claims = np.ascontiguousarray(df["death_claims"].to_numpy(dtype=np.float64))
+        lapse_payouts = np.ascontiguousarray(df["lapse_payouts"].to_numpy(dtype=np.float64))
+        maturity_benefit = np.ascontiguousarray(df["maturity_benefit"].to_numpy(dtype=np.float64))
+        total_expense = np.ascontiguousarray(df["total_expense"].to_numpy(dtype=np.float64))
+        premium_income = np.ascontiguousarray(df["premium_income"].to_numpy(dtype=np.float64))
+        qx_dep = np.ascontiguousarray(df["qx_dependent"].to_numpy(dtype=np.float64))
+        wx_dep = np.ascontiguousarray(df["wx_dependent"].to_numpy(dtype=np.float64))
 
         # JIT kernel rollback backward induction
         reserves = _rollback_gpv_kernel(
@@ -390,8 +390,8 @@ class GrossPremiumValuation:
             premiums=premium_income,
             qx_dep=qx_dep,
             wx_dep=wx_dep,
-            discount_v=v,
-            max_t=n,
+            discount_v=float(v),
+            max_t=int(n),
         )
 
         x = contract.issue_age

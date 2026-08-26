@@ -18,7 +18,7 @@ from __future__ import annotations
 import io
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, cast
 
 import numpy as np
 import pandas as pd
@@ -89,14 +89,17 @@ class PortfolioValuationEngine:
         """
         if isinstance(source, pd.DataFrame):
             df = source.copy()
-        elif isinstance(source, (str, bytes)):
-            if isinstance(source, bytes):
-                source_str = source.decode("utf-8")
+        elif isinstance(source, bytes):
+            df = pd.read_csv(io.BytesIO(source))
+        elif isinstance(source, str):
+            if "\n" in source or "," in source:
+                df = pd.read_csv(io.StringIO(source))
             else:
-                source_str = source
-            df = pd.read_csv(io.StringIO(source_str))
-        else:
+                df = pd.read_csv(source)
+        elif isinstance(source, (io.StringIO, io.BytesIO)):
             df = pd.read_csv(source)
+        else:
+            df = pd.read_csv(cast(Any, source))
 
         # Normalize column names
         df.columns = df.columns.str.strip().str.lower().str.replace(" ", "_")
@@ -273,11 +276,12 @@ class PortfolioValuationEngine:
         bel_per_policy = pvfb_per_policy + pvfe_per_policy - pvfp_per_policy
 
         # Attach seriatim results to DataFrame
-        res_df = df.copy()
-        res_df["pvfb"] = np.round(pvfb_per_policy, 2)
-        res_df["pvfp"] = np.round(pvfp_per_policy, 2)
-        res_df["pvfe"] = np.round(pvfe_per_policy, 2)
-        res_df["bel"] = np.round(bel_per_policy, 2)
+        res_df = df.assign(
+            pvfb=np.round(pvfb_per_policy, 2).astype(float),
+            pvfp=np.round(pvfp_per_policy, 2).astype(float),
+            pvfe=np.round(pvfe_per_policy, 2).astype(float),
+            bel=np.round(bel_per_policy, 2).astype(float),
+        )
 
         # ────────────────────────────────────────────────────────
         # 5. Annual Aggregate Waterfall
@@ -306,9 +310,9 @@ class PortfolioValuationEngine:
         # 6. Segment Breakdown Analytics
         # ────────────────────────────────────────────────────────
         # By Product Type
-        prod_breakdown = {}
+        prod_breakdown: dict[str, dict[str, Any]] = {}
         for ptype, group in res_df.groupby("product_type"):
-            prod_breakdown[ptype] = {
+            prod_breakdown[str(ptype)] = {
                 "count": int(len(group)),
                 "sum_assured": round(float(group["sum_assured"].sum()), 2),
                 "pvfb": round(float(group["pvfb"].sum()), 2),
