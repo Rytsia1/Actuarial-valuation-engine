@@ -130,18 +130,19 @@ async function fetchStressTest() {
   error.value = null
 
   try {
-    const isWholeLife = props.contractForm.product_type === 'whole_life'
+    const form = props.contractForm || {}
+    const isWholeLife = form?.product_type === 'whole_life'
     const payload = {
-      product_type: props.contractForm.product_type || 'endowment',
-      issue_age: Number(props.contractForm.issue_age ?? 30),
-      term: isWholeLife ? null : Number(props.contractForm.term ?? 20),
-      sum_assured: Number(props.contractForm.sum_assured ?? 1000000),
-      premium_paying_term: props.contractForm.premium_paying_term ? Number(props.contractForm.premium_paying_term) : null,
-      interest_rate: Number(props.contractForm.interest_rate ?? 0.05),
-      gross_premium: props.contractForm.gross_premium ? Number(props.contractForm.gross_premium) : null,
-      table_id: props.contractForm.table_id || 'soa_ilt',
-      expense: props.contractForm.expense || null,
-      lapse: props.contractForm.lapse || null,
+      product_type: form?.product_type || 'endowment',
+      issue_age: Number(form?.issue_age ?? 30),
+      term: isWholeLife ? null : Number(form?.term ?? 20),
+      sum_assured: Number(form?.sum_assured ?? 1000000),
+      premium_paying_term: form?.premium_paying_term ? Number(form.premium_paying_term) : null,
+      interest_rate: Number(form?.interest_rate ?? 0.05),
+      gross_premium: form?.gross_premium ? Number(form.gross_premium) : null,
+      table_id: form?.table_id || 'soa_ilt',
+      expense: form?.expense || null,
+      lapse: form?.lapse || null,
       shocks: {
         interest_rate_bps: Number(shocks.interest_rate_bps || 0),
         mortality_multiplier: Number(shocks.mortality_multiplier || 1.0),
@@ -157,7 +158,7 @@ async function fetchStressTest() {
     renderAllCharts()
   } catch (err) {
     console.error('Stress test valuation failed:', err)
-    error.value = err.message || 'Failed to calculate stress test.'
+    error.value = err?.message || 'Failed to calculate stress test.'
   } finally {
     loading.value = false
   }
@@ -178,19 +179,19 @@ function triggerValuation(immediate = false) {
   }
 }
 
-// Watch sliders for real-time changes
+// Watch sliders for real-time changes with ultra-safe prop access
 watch(
   () => [
     shocks.interest_rate_bps,
     shocks.mortality_multiplier,
     shocks.lapse_multiplier,
     shocks.expense_inflation_pct,
-    props.contractForm.product_type,
-    props.contractForm.issue_age,
-    props.contractForm.term,
-    props.contractForm.sum_assured,
-    props.contractForm.interest_rate,
-    props.contractForm.table_id,
+    props.contractForm?.product_type,
+    props.contractForm?.issue_age,
+    props.contractForm?.term,
+    props.contractForm?.sum_assured,
+    props.contractForm?.interest_rate,
+    props.contractForm?.table_id,
   ],
   () => {
     triggerValuation(false)
@@ -214,14 +215,14 @@ const chartSplitLine = { lineStyle: { color: 'rgba(255, 255, 255, 0.04)' } }
 const chartAxisLine = { lineStyle: { color: '#1E293B' } }
 
 function renderTornadoChart() {
-  if (!tornadoChartRef.value || !stressData.value?.tornado_data) return
+  if (!tornadoChartRef.value || !Array.isArray(stressData.value?.tornado_data) || stressData.value.tornado_data.length === 0) return
   if (!tornadoChart) tornadoChart = markRaw(echarts.init(tornadoChartRef.value))
 
   const items = [...stressData.value.tornado_data].reverse()
-  const factors = items.map(d => d.risk_factor)
-  const lowDeltas = items.map(d => d.low_delta)
-  const highDeltas = items.map(d => d.high_delta)
-  const currentDeltas = items.map(d => d.current_delta)
+  const factors = items.map(d => d?.risk_factor ?? 'Factor')
+  const lowDeltas = items.map(d => Number(d?.low_delta ?? 0))
+  const highDeltas = items.map(d => Number(d?.high_delta ?? 0))
+  const currentDeltas = items.map(d => Number(d?.current_delta ?? 0))
 
   const option = {
     backgroundColor: 'transparent',
@@ -233,13 +234,14 @@ function renderTornadoChart() {
         if (!params || params.length === 0) return ''
         const idx = params[0].dataIndex
         const item = items[idx]
+        if (!item) return ''
         return `
-          <div style="font-weight:600;color:#F8FAFC;margin-bottom:4px">${item.risk_factor}</div>
+          <div style="font-weight:600;color:#F8FAFC;margin-bottom:4px">${item.risk_factor || ''}</div>
           <div style="font-size:11px;color:#CBD5E1;line-height:1.6">
-            <div><span style="color:#38BDF8">Downside (${item.low_label}):</span> ${formatCurrency(item.low_delta)} (${formatPercent(item.low_delta_pct)})</div>
-            <div><span style="color:#F43F5E">Upside (${item.high_label}):</span> ${formatCurrency(item.high_delta)} (${formatPercent(item.high_delta_pct)})</div>
-            <div style="border-top:1px solid rgba(255,255,255,0.08);margin-top:4px;padding-top:4px"><span style="color:#FBBF24">Current Slider (${item.current_label}):</span> <strong>${formatCurrency(item.current_delta)}</strong> (${formatPercent(item.current_delta_pct)})</div>
-            <div style="color:#818CF8;font-weight:600">Total Factor Swing: ${formatCurrency(item.swing)} (${item.swing_pct.toFixed(1)}%)</div>
+            <div><span style="color:#38BDF8">Downside (${item.low_label || 'Low'}):</span> ${formatCurrency(item.low_delta)} (${formatPercent(item.low_delta_pct)})</div>
+            <div><span style="color:#F43F5E">Upside (${item.high_label || 'High'}):</span> ${formatCurrency(item.high_delta)} (${formatPercent(item.high_delta_pct)})</div>
+            <div style="border-top:1px solid rgba(255,255,255,0.08);margin-top:4px;padding-top:4px"><span style="color:#FBBF24">Current Slider (${item.current_label || 'Current'}):</span> <strong>${formatCurrency(item.current_delta)}</strong> (${formatPercent(item.current_delta_pct)})</div>
+            <div style="color:#818CF8;font-weight:600">Total Factor Swing: ${formatCurrency(item.swing)} (${Number(item.swing_pct ?? 0).toFixed(1)}%)</div>
           </div>`
       },
     },
@@ -294,13 +296,13 @@ function renderTornadoChart() {
 }
 
 function renderTrajectoryChart() {
-  if (!trajectoryChartRef.value || !stressData.value?.reserve_trajectory) return
+  if (!trajectoryChartRef.value || !Array.isArray(stressData.value?.reserve_trajectory) || stressData.value.reserve_trajectory.length === 0) return
   if (!trajectoryChart) trajectoryChart = markRaw(echarts.init(trajectoryChartRef.value))
 
   const traj = stressData.value.reserve_trajectory
-  const durations = traj.map(d => `t=${d.duration}`)
-  const baseReserves = traj.map(d => d.baseline_reserve)
-  const stressedReserves = traj.map(d => d.stressed_reserve)
+  const durations = traj.map(d => `t=${d?.duration ?? 0}`)
+  const baseReserves = traj.map(d => Number(d?.baseline_reserve ?? 0))
+  const stressedReserves = traj.map(d => Number(d?.stressed_reserve ?? 0))
 
   const option = {
     backgroundColor: 'transparent',
@@ -311,10 +313,11 @@ function renderTrajectoryChart() {
         if (!params || params.length === 0) return ''
         const idx = params[0].dataIndex
         const item = traj[idx]
-        const delta = item.stressed_reserve - item.baseline_reserve
-        const deltaPct = item.baseline_reserve !== 0 ? (delta / Math.abs(item.baseline_reserve)) * 100 : 0
+        if (!item) return ''
+        const delta = (item.stressed_reserve ?? 0) - (item.baseline_reserve ?? 0)
+        const deltaPct = item.baseline_reserve && item.baseline_reserve !== 0 ? (delta / Math.abs(item.baseline_reserve)) * 100 : 0
         return `
-          <div style="font-weight:600;color:#F8FAFC;margin-bottom:4px">Duration t=${item.duration} (Age ${item.age})</div>
+          <div style="font-weight:600;color:#F8FAFC;margin-bottom:4px">Duration t=${item.duration ?? 0} (Age ${item.age ?? 0})</div>
           <div style="font-size:11px;color:#CBD5E1;line-height:1.6">
             <div><span style="color:#38BDF8">Baseline Reserve:</span> ${formatCurrency(item.baseline_reserve)}</div>
             <div><span style="color:#F43F5E">Stressed Reserve:</span> <strong>${formatCurrency(item.stressed_reserve)}</strong></div>
@@ -351,16 +354,9 @@ function renderTrajectoryChart() {
         type: 'line',
         data: baseReserves,
         smooth: true,
-        symbol: 'circle',
-        symbolSize: 4,
-        lineStyle: { width: 2, color: '#38BDF8' },
+        symbol: 'none',
+        lineStyle: { width: 2, color: '#38BDF8', type: 'dashed' },
         itemStyle: { color: '#38BDF8' },
-        areaStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(56, 189, 248, 0.20)' },
-            { offset: 1, color: 'rgba(56, 189, 248, 0.0)' },
-          ]),
-        },
       },
       {
         name: 'Stressed Reserve Profile',
@@ -368,8 +364,8 @@ function renderTrajectoryChart() {
         data: stressedReserves,
         smooth: true,
         symbol: 'circle',
-        symbolSize: 4,
-        lineStyle: { width: 2.5, color: '#F43F5E', type: 'solid' },
+        symbolSize: 3,
+        lineStyle: { width: 2.5, color: '#F43F5E' },
         itemStyle: { color: '#F43F5E' },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
@@ -393,11 +389,19 @@ function renderAllCharts() {
 // ────────────────────────────────────────────────────────────
 
 onMounted(() => {
-  fetchStressTest()
+  try {
+    fetchStressTest()
+  } catch (err) {
+    console.error('Error initializing stress test on mount:', err)
+  }
 
   resizeObserver = new ResizeObserver(() => {
-    tornadoChart?.resize()
-    trajectoryChart?.resize()
+    try {
+      tornadoChart?.resize()
+      trajectoryChart?.resize()
+    } catch (err) {
+      console.warn('Error during chart resize:', err)
+    }
   })
 
   if (tornadoChartRef.value) resizeObserver.observe(tornadoChartRef.value)
@@ -409,6 +413,8 @@ onUnmounted(() => {
   if (resizeObserver) resizeObserver.disconnect()
   tornadoChart?.dispose()
   trajectoryChart?.dispose()
+  tornadoChart = null
+  trajectoryChart = null
 })
 </script>
 

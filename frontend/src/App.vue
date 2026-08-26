@@ -1374,7 +1374,7 @@ onUnmounted(() => {
         <StressTestDashboard :contract-form="form" />
 
         <!-- Compound Macro-Scenarios -->
-        <div v-if="sensitivityData" class="card p-5 space-y-3">
+        <div v-if="sensitivityData && sensitivityData.combined_scenarios && sensitivityData.combined_scenarios.length" class="card p-5 space-y-3">
           <div class="flex items-center justify-between pb-2 border-b border-white/[0.06]">
             <div>
               <h3 class="text-sm font-semibold text-white">Standard Compound Regulatory & Macro Stress Scenarios</h3>
