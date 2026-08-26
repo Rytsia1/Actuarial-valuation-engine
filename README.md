@@ -13,6 +13,9 @@ A modular, production-ready Python engine for life insurance liability modeling,
 - **Cash Flow Projections** — Deterministic expected cash flows with equivalence validation
 - **Policy Reserves (_t V)** — Prospective and retrospective net premium reserves with automated `_t V_pro ≡ _t V_retro` validation and Fackler recurrence
 - **Gross Premium Valuation (GPV / BEL)** — Multi-decrement cash flows with acquisition/maintenance expenses (α, β, γ) and UDD-based lapse/surrender behavior
+- **Economic Scenario Generator (ESG)** — Vectorized Vasicek short-rate simulation with Euler-Maruyama and exact Gaussian discretization
+- **Dynamic Policyholder Behavior** — S-curve interest rate sensitive lapse modeling (disintermediation risk)
+- **Monte Carlo Valuation & Tail Risk** — Path-dependent liability projections, Value at Risk ($\text{VaR}_{95}, \text{VaR}_{99}$), and Conditional Value at Risk ($\text{CVaR}_{95}, \text{CVaR}_{99}$)
 
 ## Architecture
 
@@ -31,6 +34,10 @@ actuary_engine/
 ├── valuation/           # Policy reserves & liability engines
 │   ├── reserves.py      # ReserveCalculator (prospective, retrospective, recurrence)
 │   └── gpv.py           # GrossPremiumValuation (BEL, expenses, multi-decrement)
+├── stochastic/          # Level 4: Stochastic simulation & risk engine
+│   ├── esg.py           # VasicekESG (Euler-Maruyama & exact paths, discount factors)
+│   ├── dynamic_lapse.py # DynamicLapseModel (S-curve policyholder behavior)
+│   └── monte_carlo.py   # StochasticValuationEngine (Monte Carlo, VaR, CVaR)
 ├── curves/              # Survival & discount curves
 │   └── survival.py      # SurvivalCurve
 ├── projections/         # Cash flow engines
@@ -113,6 +120,11 @@ from actuary_engine import (
     CommutationFunctions,
     LevelPremiumCalculator,
     ReserveCalculator,
+    VasicekParams,
+    VasicekESG,
+    DynamicLapseParams,
+    DynamicLapseModel,
+    StochasticValuationEngine,
     InterestAssumption,
     PolicyContract,
     ProductType,
@@ -140,7 +152,14 @@ contract = PolicyContract(
 )
 res_calc = ReserveCalculator(comm)
 res_df = res_calc.reserve_profile(contract, result.annual_premium, method="both")
-print(res_df.head())
+
+# 4. Stochastic Monte Carlo Valuation & Tail Risk (Level 4)
+esg = VasicekESG(VasicekParams(r0=0.05, kappa=0.20, theta=0.05, sigma=0.015))
+dyn_lapse = DynamicLapseModel(DynamicLapseParams(credited_rate=0.04, sensitivity=25.0))
+stoch_engine = StochasticValuationEngine(table=table, esg=esg, dynamic_lapse=dyn_lapse)
+
+stoch_res = stoch_engine.run_simulation(contract, gross_premium=35_000.0, n_scenarios=2000)
+print(stoch_res.summary())
 ```
 
 ## Mathematical Foundation
@@ -161,14 +180,30 @@ $$P = \frac{\text{NSP}}{\ddot{a}_{x:\overline{n}|}}$$
 ### Policy Reserves (_t V)
 
 - **Prospective:** ${}_t V = \text{APV}(\text{Future Benefits}) - \text{APV}(\text{Future Premiums})$
-- **Retrospective:** ${}_t V = [\text{APV}(\text{Past Premiums}) - \text{APV}(\text{Past Benefits})] \times \frac{D_x}{D_{x+t}}$
+- **Retrospective:** ${}_t V = [\text{APV}(\text{Past Premiums}) - \text{Past Claims}] \times \frac{D_x}{D_{x+t}}$
 - **Invariants:** ${}_0 V = 0$, ${}_n V = 0$ (Term), ${}_n V = S$ (Endowment), ${}_t V_{\text{pro}} \equiv {}_t V_{\text{retro}}$
+
+### Economic Scenario Generator (Vasicek Short-Rate Model)
+
+$$dr_t = \kappa(\theta - r_t)dt + \sigma dW_t$$
+
+- **Euler-Maruyama:** $r_{t+1} = r_t + \kappa(\theta - r_t)\Delta t + \sigma \sqrt{\Delta t} Z_t$
+- **Stochastic Discount Factor:** $D(t) = \exp\left(-\sum_{k=0}^{t-1} r_k \Delta t\right)$
+
+### Dynamic Policyholder Lapse (S-Curve)
+
+$$w(r_t) = w_{\min} + \frac{w_{\max} - w_{\min}}{1 + \exp\left(-\gamma \cdot (r_t - r_{\text{cred}} - x_0)\right)}$$
+
+### Quantitative Tail Risk Measures
+
+- **Value at Risk (VaR):** $\text{VaR}_\alpha = \inf \{ x \in \mathbb{R} : P(\text{BEL} \le x) \ge \alpha \}$
+- **Conditional Value at Risk (CVaR / Expected Shortfall):** $\text{CVaR}_\alpha = \mathbb{E}[\text{BEL} \mid \text{BEL} \ge \text{VaR}_\alpha]$
 
 ## Roadmap
 
 - [x] **Level 1–2:** Life tables, commutation functions, pricing, annual level premiums
 - [x] **Level 3:** Prospective/retrospective reserves, Fackler recurrence, GPV/BEL, expense loading, lapse modeling
-- [ ] **Level 4:** ESG (Vasicek/Hull-White), stochastic mortality (Lee-Carter), Monte Carlo simulation
+- [x] **Level 4:** ESG (Vasicek), dynamic lapse S-curve, Monte Carlo valuation, tail risk (VaR/CVaR)
 - [ ] **API Layer:** FastAPI endpoints for all calculation & valuation pipelines
 - [ ] **Frontend:** Vue 3 + Plotly dashboards (interactive reserve profiles, sensitivity tornadoes, fan charts)
 

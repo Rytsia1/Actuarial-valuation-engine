@@ -40,6 +40,11 @@ from actuary_engine import (
     ProductType,
     ReserveCalculator,
     GrossPremiumValuation,
+    VasicekParams,
+    VasicekESG,
+    DynamicLapseParams,
+    DynamicLapseModel,
+    StochasticValuationEngine,
 )
 
 
@@ -215,15 +220,64 @@ def main() -> None:
     print(f"  BEL at Gross Premium:       ${bel_gross:>10,.2f}  (Negative = embedded profit)")
 
     # ────────────────────────────────────────────────────────
-    # 8. Summary
+    # 8. Stochastic Monte Carlo Valuation & Tail Risk (Level 4)
     # ────────────────────────────────────────────────────────
-    separator("8. SUMMARY")
+    separator("8. STOCHASTIC MONTE CARLO & TAIL RISK — Vasicek ESG + Dynamic Lapses")
+
+    esg = VasicekESG(
+        params=VasicekParams(r0=0.05, kappa=0.20, theta=0.05, sigma=0.015),
+        seed=42,
+    )
+    dyn_lapse = DynamicLapseModel(
+        params=DynamicLapseParams(
+            base_lapse_rate=0.04,
+            credited_rate=0.04,
+            min_lapse_rate=0.01,
+            max_lapse_rate=0.35,
+            sensitivity=25.0,
+        )
+    )
+
+    stoch_engine = StochasticValuationEngine(
+        table=table,
+        esg=esg,
+        expense=ExpenseAssumption(
+            percent_of_premium_first=0.40,
+            percent_of_premium_renewal=0.05,
+            per_policy_first=250.0,
+            per_policy_renewal=25.0,
+        ),
+        dynamic_lapse=dyn_lapse,
+    )
+
+    stoch_result = stoch_engine.run_simulation(
+        contract=term_contract,
+        gross_premium=gross_p,
+        n_scenarios=2500,
+        seed=100,
+    )
+
+    print(f"  Simulated Scenarios:        {len(stoch_result.scenario_bel):,}")
+    print(f"  Mean Stochastic BEL:        ${stoch_result.mean_bel:>10,.2f}")
+    print(f"  Std Dev (Liability):        ${stoch_result.std_bel:>10,.2f}")
+    print(f"  50th Percentile (Median):   ${stoch_result.percentiles['50%']:>10,.2f}")
+    print(f"  95% Value at Risk (VaR):    ${stoch_result.var_95:>10,.2f}")
+    print(f"  99% Value at Risk (VaR):    ${stoch_result.var_99:>10,.2f}")
+    print(f"  95% Expected Shortfall:     ${stoch_result.cvar_95:>10,.2f}  (CVaR / CTE 95)")
+    print(f"  99% Expected Shortfall:     ${stoch_result.cvar_99:>10,.2f}  (CVaR / CTE 99)")
+
+    # ────────────────────────────────────────────────────────
+    # 9. Summary
+    # ────────────────────────────────────────────────────────
+    separator("9. SUMMARY")
     print("  ✓ SOA Illustrative Life Table loaded (111 ages)")
     print("  ✓ Commutation functions computed (vectorized)")
     print("  ✓ Insurance & annuity present values calculated")
     print("  ✓ Annual level premiums via equivalence principle")
     print("  ✓ Prospective & retrospective reserves validated (_t V_pro ≡ _t V_retro)")
     print("  ✓ Best Estimate Liability (BEL) computed under multi-decrement model")
+    print("  ✓ Vasicek ESG paths & dynamic S-curve lapse simulation executed")
+    print("  ✓ Quantitative tail risk metrics (VaR 95/99, CVaR 95/99) aggregated")
     print()
 
 
