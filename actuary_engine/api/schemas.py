@@ -311,4 +311,36 @@ class ESGSimulationResponse(BaseModel):
     feller_ratio: Optional[float] = None
 
 
+# ────────────────────────────────────────────────────────────
+# Stress Testing & Sensitivity Analysis Schemas
+# ────────────────────────────────────────────────────────────
+
+class SensitivityRequest(BaseModel):
+    """Request payload for multi-factor sensitivity and Tornado analysis."""
+
+    product_type: str = Field(default="endowment", description="Product line (term, endowment, whole_life, pure_endowment).")
+    issue_age: int = Field(default=35, ge=0, le=100, description="Age at policy issuance.")
+    term: Optional[int] = Field(default=20, ge=1, le=80, description="Policy coverage term in years.")
+    sum_assured: float = Field(default=500000.0, gt=0.0, description="Sum assured / Face amount.")
+    premium_paying_term: Optional[int] = Field(default=None, ge=1, description="Premium payment duration.")
+    interest_rate: float = Field(default=0.05, gt=0.0, le=0.50, description="Baseline valuation discount rate.")
+    gross_premium: Optional[float] = Field(default=None, gt=0.0, description="Annual gross premium (auto-calculated if omitted).")
+    table_id: str = Field(default="soa_ilt", description="Mortality table identifier.")
+    expense: Optional[ExpenseAssumption] = Field(default=None, description="Acquisition and maintenance expense loadings.")
+    lapse: Optional[LapseAssumption] = Field(default=None, description="Policyholder lapse decrement rates.")
+
+
+class SensitivityResponse(BaseModel):
+    """Response payload with Tornado chart coordinates, baseline duration/convexity/DV01, and compound scenarios."""
+
+    table_id: str
+    table_name: str
+    product_type: str
+    sum_assured: float
+    baseline: dict[str, Any]
+    tornado_items: list[dict[str, Any]]
+    combined_scenarios: list[dict[str, Any]]
+
+
+
 

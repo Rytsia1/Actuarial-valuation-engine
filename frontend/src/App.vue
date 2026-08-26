@@ -8,6 +8,7 @@ import {
   deleteMortalityTable,
   runDeterministicValuation,
   runIFRS17Valuation,
+  runSensitivityAnalysis,
   startAsyncStochasticValuation,
   getStochasticJobStatus,
   runStochasticValuation,
@@ -21,7 +22,7 @@ import { connectSimulationSocket } from './services/simulationSocket'
 // Reactive Dashboard State
 // ────────────────────────────────────────────────────────────
 
-const activeTab = ref('overview') // 'overview', 'ifrs17', 'portfolio', 'reserves', 'stochastic', 'cashflows', 'table'
+const activeTab = ref('overview') // 'overview', 'sensitivity', 'ifrs17', 'portfolio', 'reserves', 'stochastic', 'cashflows', 'table'
 const backendStatus = ref('checking') // 'healthy', 'error', 'checking'
 const loading = ref(false)
 const errorMessage = ref(null)
@@ -55,6 +56,10 @@ const isDragging = ref(false)
 // IFRS 17 State
 const ifrs17Data = ref(null)
 const ifrs17Loading = ref(false)
+
+// Sensitivity & Stress State
+const sensitivityData = ref(null)
+const sensitivityLoading = ref(false)
 
 // Form Parameters with standard actuarial defaults
 const form = reactive({
@@ -111,6 +116,7 @@ const portfolioProdChartRef = ref(null)
 const portfolioAgeChartRef = ref(null)
 const ifrs17LrcChartRef = ref(null)
 const ifrs17PnlChartRef = ref(null)
+const tornadoChartRef = ref(null)
 
 let heroChart = null
 let reserveChart = null
@@ -122,6 +128,7 @@ let portfolioProdChart = null
 let portfolioAgeChart = null
 let ifrs17LrcChart = null
 let ifrs17PnlChart = null
+let tornadoChart = null
 let resizeObserver = null
 
 // ────────────────────────────────────────────────────────────
@@ -261,21 +268,17 @@ async function executeValuation() {
     }
 
     const ifrs17Payload = {
-      product_type: form.product_type,
-      issue_age: form.issue_age,
-      term: form.product_type === 'whole_life' ? null : form.term,
-      sum_assured: form.sum_assured,
-      premium_paying_term: form.premium_paying_term,
-      interest_rate: form.interest_rate,
-      gross_premium: form.gross_premium,
-      table_id: form.table_id,
+      ...detPayload,
       ra_ratio: form.ra_ratio,
-      expense: form.expense,
-      lapse: form.lapse,
+    }
+
+    const sensPayload = {
+      ...detPayload,
     }
 
     const detPromise = runDeterministicValuation(detPayload)
     const ifrs17Promise = runIFRS17Valuation(ifrs17Payload)
+    const sensPromise = runSensitivityAnalysis(sensPayload)
 
     const asyncJobPromise = new Promise(async (resolve, reject) => {
       try {
@@ -334,11 +337,17 @@ async function executeValuation() {
       }
     })
 
-    const [detRes, stochRes, ifrs17Res] = await Promise.all([detPromise, asyncJobPromise, ifrs17Promise])
+    const [detRes, stochRes, ifrs17Res, sensRes] = await Promise.all([
+      detPromise,
+      asyncJobPromise,
+      ifrs17Promise,
+      sensPromise,
+    ])
 
     deterministicData.value = detRes
     stochasticData.value = stochRes
     ifrs17Data.value = ifrs17Res
+    sensitivityData.value = sensRes
     backendStatus.value = 'healthy'
 
     await nextTick()
@@ -883,6 +892,88 @@ function renderIFRS17Charts() {
   }
 }
 
+function renderTornadoChart() {
+  if (!tornadoChartRef.value || !sensitivityData.value?.tornado_items) return
+  if (!tornadoChart) tornadoChart = echarts.init(tornadoChartRef.value)
+
+  // Inverted so largest swing is at top of y-axis
+  const items = [...sensitivityData.value.tornado_items].reverse()
+  const factors = items.map(d => d.risk_factor)
+  const lowDeltas = items.map(d => d.low_delta)
+  const highDeltas = items.map(d => d.high_delta)
+
+  const option = {
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      backgroundColor: 'rgba(11, 15, 25, 0.95)',
+      borderColor: 'rgba(244, 63, 94, 0.3)',
+      textStyle: { color: '#f8fafc', fontSize: 12, fontFamily: 'JetBrains Mono' },
+      formatter: (params) => {
+        if (!params || params.length === 0) return ''
+        const idx = params[0].dataIndex
+        const item = items[idx]
+        return `
+          <div class="font-bold text-white mb-1">${item.risk_factor}</div>
+          <div class="text-xs text-slate-300 font-mono space-y-1">
+            <div><span class="text-emerald-400">Low Shock (${item.low_label}):</span> ${formatCurrency(item.low_delta)} (${item.low_delta_pct > 0 ? '+' : ''}${item.low_delta_pct}%)</div>
+            <div><span class="text-rose-400">High Shock (${item.high_label}):</span> ${formatCurrency(item.high_delta)} (${item.high_delta_pct > 0 ? '+' : ''}${item.high_delta_pct}%)</div>
+            <div class="border-t border-white/10 pt-1 text-fuchsia-300 font-bold">Total Delta Swing: ${formatCurrency(item.swing)} (${item.swing_pct}%)</div>
+          </div>
+        `
+      },
+    },
+    legend: {
+      data: ['Low Shock Delta (Downside)', 'High Shock Delta (Upside)'],
+      textStyle: { color: '#94a3b8', fontSize: 11 },
+      top: 0,
+      right: 10,
+    },
+    grid: { top: 40, left: 240, right: 35, bottom: 25 },
+    xAxis: {
+      type: 'value',
+      axisLine: { lineStyle: { color: '#334155' } },
+      axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', formatter: v => `$${(v / 1000).toFixed(0)}k` },
+      splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.06)' } },
+    },
+    yAxis: {
+      type: 'category',
+      data: factors,
+      axisLine: { lineStyle: { color: '#334155' } },
+      axisLabel: { color: '#cbd5e1', fontSize: 11, fontFamily: 'JetBrains Mono' },
+      splitLine: { show: false },
+    },
+    series: [
+      {
+        name: 'Low Shock Delta (Downside)',
+        type: 'bar',
+        data: lowDeltas,
+        itemStyle: {
+          borderRadius: [4, 4, 4, 4],
+          color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+            { offset: 0, color: '#38bdf8' },
+            { offset: 1, color: '#34d399' },
+          ]),
+        },
+      },
+      {
+        name: 'High Shock Delta (Upside)',
+        type: 'bar',
+        data: highDeltas,
+        itemStyle: {
+          borderRadius: [4, 4, 4, 4],
+          color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+            { offset: 0, color: '#fb923c' },
+            { offset: 1, color: '#f43f5e' },
+          ]),
+        },
+      },
+    ],
+  }
+  tornadoChart.setOption(option, true)
+}
+
 function renderAllCharts() {
   renderHeroChart()
   renderReserveChart()
@@ -891,6 +982,7 @@ function renderAllCharts() {
   renderDistChart()
   renderPortfolioCharts()
   renderIFRS17Charts()
+  renderTornadoChart()
 }
 
 // ────────────────────────────────────────────────────────────
@@ -912,6 +1004,7 @@ onMounted(async () => {
     portfolioAgeChart?.resize()
     ifrs17LrcChart?.resize()
     ifrs17PnlChart?.resize()
+    tornadoChart?.resize()
   })
 
   if (heroChartRef.value) resizeObserver.observe(heroChartRef.value)
@@ -924,6 +1017,7 @@ onMounted(async () => {
   if (portfolioAgeChartRef.value) resizeObserver.observe(portfolioAgeChartRef.value)
   if (ifrs17LrcChartRef.value) resizeObserver.observe(ifrs17LrcChartRef.value)
   if (ifrs17PnlChartRef.value) resizeObserver.observe(ifrs17PnlChartRef.value)
+  if (tornadoChartRef.value) resizeObserver.observe(tornadoChartRef.value)
 })
 
 onUnmounted(() => {
@@ -942,6 +1036,7 @@ onUnmounted(() => {
   portfolioAgeChart?.dispose()
   ifrs17LrcChart?.dispose()
   ifrs17PnlChart?.dispose()
+  tornadoChart?.dispose()
 })
 </script>
 
@@ -982,11 +1077,12 @@ onUnmounted(() => {
           <button
             v-for="tab in [
               { id: 'overview', label: 'Executive Overview' },
-              { id: 'ifrs17', label: 'IFRS 17 / PSAK 117 (BBA)' },
+              { id: 'sensitivity', label: 'Stress & Tornado' },
+              { id: 'ifrs17', label: 'IFRS 17 (BBA)' },
               { id: 'portfolio', label: 'Portfolio Batch (CSV)' },
-              { id: 'reserves', label: 'Policy Reserves (_t V)' },
-              { id: 'stochastic', label: 'Vasicek ESG & VaR' },
-              { id: 'cashflows', label: 'Cashflow Waterfall' },
+              { id: 'reserves', label: 'Reserves (_t V)' },
+              { id: 'stochastic', label: 'ESG & VaR' },
+              { id: 'cashflows', label: 'Cashflows' },
               { id: 'table', label: 'Cohort Table' }
             ]"
             :key="tab.id"
@@ -1099,15 +1195,15 @@ onUnmounted(() => {
     <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-4 text-center relative z-10">
       <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-white/[0.04] border border-fuchsia-500/20 backdrop-blur-xl mb-4 shadow-[0_0_20px_rgba(236,72,153,0.15)]">
         <span class="h-1.5 w-1.5 rounded-full bg-fuchsia-400 animate-pulse"></span>
-        <span class="text-xs font-medium text-slate-300">IFRS 17 / PSAK 117 General Measurement Model</span>
-        <span class="text-[10px] text-fuchsia-400 font-mono">⚡ BEL + RA + CSM Decomposed</span>
+        <span class="text-xs font-medium text-slate-300">Automated Multi-Dimensional Stress Testing</span>
+        <span class="text-[10px] text-fuchsia-400 font-mono">🌪️ Tornado Risk Ranking</span>
       </div>
 
       <h1 class="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight text-white max-w-4xl mx-auto leading-tight">
         The fastest way to <span class="text-transparent bg-clip-text bg-gradient-to-r from-fuchsia-400 via-rose-400 to-amber-300">model, value & stress-test</span> actuarial liabilities.
       </h1>
       <p class="mt-3 text-sm text-slate-400 max-w-2xl mx-auto font-mono">
-        IFRS 17 Building Block Approach, dynamic mortality tables, prospective reserves ${_t V}$, and Vasicek Monte Carlo risk simulation.
+        Tornado sensitivity charts, effective liability duration & DV01, Hull-White/CIR ESG, IFRS 17 BBA, and seriatim batch portfolios.
       </p>
 
       <!-- Preset Quick Bar -->
@@ -1126,16 +1222,16 @@ onUnmounted(() => {
           🛡️ 30-Yr Term ($750k)
         </button>
         <button
-          @click="applyPreset('whole_life')"
-          class="px-3 py-1 rounded-lg text-xs font-mono font-medium bg-white/[0.04] hover:bg-sky-500/20 border border-white/[0.08] hover:border-sky-500/40 text-slate-300 transition"
+          @click="activeTab = 'sensitivity'; nextTick(() => renderAllCharts())"
+          class="px-3 py-1 rounded-lg text-xs font-mono font-medium bg-white/[0.04] hover:bg-rose-500/20 border border-white/[0.08] hover:border-rose-500/40 text-rose-300 transition"
         >
-          ♾️ Whole Life ($500k)
+          🌪️ Tornado Sensitivity
         </button>
         <button
           @click="activeTab = 'ifrs17'; nextTick(() => renderAllCharts())"
           class="px-3 py-1 rounded-lg text-xs font-mono font-medium bg-white/[0.04] hover:bg-amber-500/20 border border-white/[0.08] hover:border-amber-500/40 text-amber-300 transition"
         >
-          📑 IFRS 17 / PSAK 117 (BBA)
+          📑 IFRS 17 (BBA)
         </button>
         <button
           @click="activeTab = 'portfolio'; runSamplePortfolioDemo(1000)"
@@ -1147,7 +1243,173 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 5. IFRS 17 / PSAK 117 VALUATION WORKSPACE TAB -->
+    <!-- 5. SENSITIVITY & STRESS TESTING WORKSPACE TAB -->
+    <!-- ──────────────────────────────────────────────────────────── -->
+    <section v-if="activeTab === 'sensitivity'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 relative z-10 space-y-6">
+      <!-- Sensitivity Baseline Indicators KPI Strip -->
+      <div v-if="sensitivityData?.baseline" class="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <!-- Duration -->
+        <div class="neon-glass rounded-2xl p-4 border border-white/[0.08]">
+          <div class="text-xs font-mono text-slate-400">LIABILITY DURATION</div>
+          <div class="text-2xl font-bold font-mono text-sky-300 mt-1">
+            {{ sensitivityData.baseline.effective_duration }} yrs
+          </div>
+          <div class="text-[11px] text-slate-400 font-mono mt-1">Effective Modified Duration</div>
+        </div>
+
+        <!-- DV01 -->
+        <div class="neon-glass rounded-2xl p-4 border border-white/[0.08]">
+          <div class="text-xs font-mono text-slate-400">DOLLAR DURATION (DV01)</div>
+          <div class="text-2xl font-bold font-mono text-amber-300 mt-1">
+            {{ formatCurrency(sensitivityData.baseline.dv01) }}
+          </div>
+          <div class="text-[11px] text-slate-400 font-mono mt-1">Dollar shift per 1 bp</div>
+        </div>
+
+        <!-- Convexity -->
+        <div class="neon-glass rounded-2xl p-4 border border-white/[0.08]">
+          <div class="text-xs font-mono text-slate-400">LIABILITY CONVEXITY</div>
+          <div class="text-2xl font-bold font-mono text-fuchsia-300 mt-1">
+            {{ sensitivityData.baseline.effective_convexity }}
+          </div>
+          <div class="text-[11px] text-slate-400 font-mono mt-1">Curvature sensitivity</div>
+        </div>
+
+        <!-- PV Benefits -->
+        <div class="neon-glass rounded-2xl p-4 border border-white/[0.08]">
+          <div class="text-xs font-mono text-slate-400">PV FUTURE BENEFITS</div>
+          <div class="text-2xl font-bold font-mono text-rose-300 mt-1">
+            {{ formatCurrency(sensitivityData.baseline.pv_future_benefits) }}
+          </div>
+          <div class="text-[11px] text-slate-400 font-mono mt-1">Claims + Maturities</div>
+        </div>
+
+        <!-- Base BEL -->
+        <div class="neon-glass rounded-2xl p-4 border border-white/[0.08]">
+          <div class="text-xs font-mono text-slate-400">BASE NET BEL</div>
+          <div class="text-2xl font-bold font-mono text-emerald-300 mt-1">
+            {{ formatCurrency(sensitivityData.baseline.base_reserve) }}
+          </div>
+          <div class="text-[11px] text-slate-400 font-mono mt-1">PV(Outgo) - PV(Premiums)</div>
+        </div>
+      </div>
+
+      <!-- Tornado Chart Visualizer Card -->
+      <div v-if="sensitivityData" class="neon-glass rounded-2xl p-6 border border-white/[0.08] space-y-4">
+        <div class="flex items-center justify-between border-b border-white/[0.08] pb-3">
+          <div>
+            <h3 class="text-base font-bold text-white tracking-wide flex items-center space-x-2">
+              <span class="h-3 w-3 rounded-full bg-rose-500 shadow-[0_0_8px_#f43f5e]"></span>
+              <span>Actuarial Tornado Sensitivity Chart (Ranked by Total Delta Swing)</span>
+            </h3>
+            <p class="text-xs text-slate-400 font-mono">
+              Green/Cyan = Downside Shock Delta ($\Delta V_{\text{low}}$) | Orange/Red = Upside Shock Delta ($\Delta V_{\text{high}}$) relative to zero.
+            </p>
+          </div>
+          <span class="px-2 py-0.5 text-xs font-mono rounded-full bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20">
+            One-At-A-Time (OAT)
+          </span>
+        </div>
+        <div ref="tornadoChartRef" class="w-full h-96"></div>
+      </div>
+
+      <!-- Compound Macro-Stress Scenario Matrix -->
+      <div v-if="sensitivityData" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Table 1: Compound Scenarios -->
+        <div class="neon-glass rounded-2xl p-5 border border-white/[0.08]">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="text-sm font-bold text-white tracking-wide">
+                Compound Stress Scenarios (Solvency & Macro Shocks)
+              </h3>
+              <p class="text-xs text-slate-400 font-mono">
+                Joint financial and demographic stress packages.
+              </p>
+            </div>
+          </div>
+
+          <div class="overflow-x-auto border border-white/[0.08] rounded-xl max-h-[380px]">
+            <table class="min-w-full text-left text-xs divide-y divide-white/[0.08] font-mono">
+              <thead class="bg-[#0b0f19] text-slate-300 sticky top-0 z-10">
+                <tr>
+                  <th class="px-3 py-2">Scenario</th>
+                  <th class="px-3 py-2">Shocked Reserve</th>
+                  <th class="px-3 py-2">Delta ($)</th>
+                  <th class="px-3 py-2">Solvency Impact</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-white/[0.04] bg-[#070b14]/60 text-slate-300">
+                <tr v-for="sc in sensitivityData.combined_scenarios" :key="sc.scenario_id" class="hover:bg-white/[0.04]">
+                  <td class="px-3 py-2.5">
+                    <div class="font-bold text-white">{{ sc.name }}</div>
+                    <div class="text-[10px] text-slate-400">{{ sc.description }}</div>
+                  </td>
+                  <td class="px-3 py-2 text-sky-300 font-bold">{{ formatCurrency(sc.shocked_reserve) }}</td>
+                  <td :class="['px-3 py-2 font-bold', sc.delta_reserve > 0 ? 'text-rose-400' : 'text-emerald-400']">
+                    {{ sc.delta_reserve > 0 ? '+' : '' }}{{ formatCurrency(sc.delta_reserve) }}
+                  </td>
+                  <td class="px-3 py-2">
+                    <span
+                      :class="[
+                        'px-2 py-0.5 text-[10px] font-bold font-mono rounded-full border',
+                        sc.solvency_impact === 'HIGH RISK'
+                          ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                          : sc.solvency_impact === 'MODERATE RISK'
+                          ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                          : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                      ]"
+                    >
+                      {{ sc.solvency_impact }}
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Table 2: One-At-A-Time Sensitivity Items -->
+        <div class="neon-glass rounded-2xl p-5 border border-white/[0.08]">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="text-sm font-bold text-white tracking-wide">
+                One-At-A-Time (OAT) Sensitivity Table
+              </h3>
+              <p class="text-xs text-slate-400 font-mono">
+                Individual factor delta bounds and total swing magnitude.
+              </p>
+            </div>
+          </div>
+
+          <div class="overflow-x-auto border border-white/[0.08] rounded-xl max-h-[380px]">
+            <table class="min-w-full text-left text-xs divide-y divide-white/[0.08] font-mono">
+              <thead class="bg-[#0b0f19] text-slate-300 sticky top-0 z-10">
+                <tr>
+                  <th class="px-3 py-2">Risk Factor</th>
+                  <th class="px-3 py-2">Low Shock</th>
+                  <th class="px-3 py-2">High Shock</th>
+                  <th class="px-3 py-2">Total Swing</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-white/[0.04] bg-[#070b14]/60 text-slate-300">
+                <tr v-for="item in sensitivityData.tornado_items" :key="item.risk_factor" class="hover:bg-white/[0.04]">
+                  <td class="px-3 py-2 text-white font-semibold">{{ item.risk_factor }}</td>
+                  <td class="px-3 py-2 text-emerald-400">{{ formatCurrency(item.low_reserve) }}</td>
+                  <td class="px-3 py-2 text-rose-400">{{ formatCurrency(item.high_reserve) }}</td>
+                  <td class="px-3 py-2 text-fuchsia-300 font-bold">
+                    {{ formatCurrency(item.swing) }}
+                    <span class="text-[10px] text-slate-400">({{ item.swing_pct }}%)</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ──────────────────────────────────────────────────────────── -->
+    <!-- 6. IFRS 17 / PSAK 117 VALUATION WORKSPACE TAB -->
     <!-- ──────────────────────────────────────────────────────────── -->
     <section v-if="activeTab === 'ifrs17'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 relative z-10 space-y-6">
       <!-- Top IFRS 17 Initial Recognition Cards -->
@@ -1326,7 +1588,7 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 6. PORTFOLIO BATCH WORKSPACE TAB -->
+    <!-- 7. PORTFOLIO BATCH WORKSPACE TAB -->
     <!-- ──────────────────────────────────────────────────────────── -->
     <section v-if="activeTab === 'portfolio'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 relative z-10 space-y-6">
       <!-- Upload & Configuration Banner -->
@@ -1526,9 +1788,9 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 7. Hero Visualizer Card (Showcase Bar Chart for Single Contract) -->
+    <!-- 8. Hero Visualizer Card (Showcase Bar Chart for Single Contract) -->
     <!-- ──────────────────────────────────────────────────────────── -->
-    <section v-if="activeTab !== 'portfolio' && activeTab !== 'ifrs17'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 relative z-10">
+    <section v-if="activeTab !== 'portfolio' && activeTab !== 'ifrs17' && activeTab !== 'sensitivity'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 relative z-10">
       <div class="neon-border-gradient shadow-2xl">
         <div class="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
           <!-- Left: Big Neon Chart -->
@@ -1595,9 +1857,9 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 8. Top KPI Metric Cards Strip -->
+    <!-- 9. Top KPI Metric Cards Strip -->
     <!-- ──────────────────────────────────────────────────────────── -->
-    <section v-if="activeTab !== 'portfolio' && activeTab !== 'ifrs17'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 relative z-10">
+    <section v-if="activeTab !== 'portfolio' && activeTab !== 'ifrs17' && activeTab !== 'sensitivity'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 relative z-10">
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <!-- Metric 1 -->
         <div class="neon-glass rounded-2xl p-4 border border-white/[0.08] relative overflow-hidden group hover:border-sky-500/40 transition">
@@ -1654,9 +1916,9 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 9. Main Workspace Layout (Sidebar Controls + Multi-Chart Workspace) -->
+    <!-- 10. Main Workspace Layout (Sidebar Controls + Multi-Chart Workspace) -->
     <!-- ──────────────────────────────────────────────────────────── -->
-    <section v-if="activeTab !== 'portfolio' && activeTab !== 'ifrs17'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 relative z-10">
+    <section v-if="activeTab !== 'portfolio' && activeTab !== 'ifrs17' && activeTab !== 'sensitivity'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 relative z-10">
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <!-- Control Deck Sidebar (1/3) -->
         <div class="lg:col-span-1 space-y-6">
@@ -1977,7 +2239,7 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 10. Custom Mortality Table Upload Modal -->
+    <!-- 11. Custom Mortality Table Upload Modal -->
     <!-- ──────────────────────────────────────────────────────────── -->
     <div v-if="showTableModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
       <div class="neon-glass border border-white/[0.15] rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
@@ -2065,16 +2327,16 @@ onUnmounted(() => {
     </div>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 11. Footer -->
+    <!-- 12. Footer -->
     <!-- ──────────────────────────────────────────────────────────── -->
     <footer class="border-t border-white/[0.08] bg-[#030712] py-6 mt-12 relative z-10">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between text-xs font-mono text-slate-500 gap-2">
         <div class="flex items-center space-x-2">
           <span class="text-fuchsia-400">ACTUARY ENGINE</span>
           <span>•</span>
-          <span>IFRS 17 / PSAK 117</span>
+          <span>Stress Testing & Tornado</span>
           <span>•</span>
-          <span>Dynamic Mortality Tables</span>
+          <span>IFRS 17 / PSAK 117</span>
           <span>•</span>
           <span>Portfolio Batch Engine</span>
         </div>

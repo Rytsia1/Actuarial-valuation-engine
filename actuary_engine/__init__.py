@@ -56,6 +56,13 @@ from actuary_engine.valuation.ifrs17 import (
 )
 from actuary_engine.valuation.portfolio import PortfolioSummary, PortfolioValuationEngine
 from actuary_engine.valuation.reserves import ReserveCalculator
+from actuary_engine.valuation.sensitivity import (
+    CombinedScenarioResult,
+    SensitivityBaselineMetrics,
+    SensitivityEngine,
+    SensitivityReport,
+    TornadoItem,
+)
 
 __all__ = [
     "MortalityTable",
@@ -89,6 +96,11 @@ __all__ = [
     "IFRS17CohortClassification",
     "IFRS17InitialBalance",
     "IFRS17ValuationResult",
+    "SensitivityEngine",
+    "SensitivityReport",
+    "SensitivityBaselineMetrics",
+    "TornadoItem",
+    "CombinedScenarioResult",
     "VasicekParams",
     "VasicekESG",
     "HullWhiteParams",
@@ -103,3 +115,4 @@ __all__ = [
     "LeeCarterFitResult",
     "LeeCarterForecastSummary",
 ]
+

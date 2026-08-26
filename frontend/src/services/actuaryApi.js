@@ -242,4 +242,19 @@ export async function simulateESG(payload) {
   });
 }
 
+/**
+ * Run stress testing and Tornado sensitivity analysis
+ * POST /api/v1/valuation/sensitivity/tornado
+ *
+ * @param {Object} payload - SensitivityRequest
+ * @returns {Promise<Object>} SensitivityResponse
+ */
+export async function runSensitivityAnalysis(payload) {
+  return await apiRequest('/valuation/sensitivity/tornado', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+
 

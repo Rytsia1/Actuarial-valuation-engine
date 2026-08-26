@@ -40,6 +40,8 @@ from actuary_engine.api.schemas import (
     LeeCarterForecastResponse,
     PortfolioValuationJSONRequest,
     PortfolioValuationResponse,
+    SensitivityRequest,
+    SensitivityResponse,
     StochasticValuationRequest,
     StochasticValuationResponse,
     TableListItem,
@@ -62,6 +64,7 @@ from actuary_engine.valuation.gpv import GrossPremiumValuation
 from actuary_engine.valuation.ifrs17 import IFRS17Engine
 from actuary_engine.valuation.portfolio import PortfolioSummary, PortfolioValuationEngine
 from actuary_engine.valuation.reserves import ReserveCalculator
+from actuary_engine.valuation.sensitivity import SensitivityEngine
 
 logger = logging.getLogger("actuary_engine.api")
 
@@ -923,6 +926,60 @@ def simulate_esg_paths(request: ESGSimulationRequest) -> ESGSimulationResponse:
     except Exception as e:
         logger.exception("ESG simulation failed: %s", e)
         raise HTTPException(status_code=500, detail=f"ESG simulation error: {e}") from e
+
+
+# ────────────────────────────────────────────────────────────
+# Stress Testing & Tornado Sensitivity Endpoint
+# ────────────────────────────────────────────────────────────
+
+@app.post("/api/v1/valuation/sensitivity/tornado", response_model=SensitivityResponse)
+def evaluate_sensitivity_tornado(request: SensitivityRequest) -> SensitivityResponse:
+    """Run systematic multi-factor stress testing and Tornado sensitivity analysis."""
+    table_id = request.table_id or "soa_ilt"
+    try:
+        table = table_registry.get_table(table_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Mortality table '{table_id}' not found.") from None
+
+    try:
+        contract = PolicyContract(
+            product_type=request.product_type,
+            issue_age=request.issue_age,
+            term=request.term,
+            sum_assured=request.sum_assured,
+            premium_paying_term=request.premium_paying_term,
+        )
+        interest = InterestAssumption(annual_rate=request.interest_rate)
+        expense = request.expense or ExpenseAssumption()
+        lapse = request.lapse or LapseAssumption()
+
+        engine = SensitivityEngine(
+            table=table,
+            interest=interest,
+            expense=expense,
+            lapse=lapse,
+        )
+
+        report = engine.run_tornado_analysis(
+            contract=contract,
+            gross_premium=request.gross_premium,
+        )
+
+        return SensitivityResponse(
+            table_id=table_id,
+            table_name=table.name,
+            product_type=request.product_type,
+            sum_assured=request.sum_assured,
+            baseline=report.baseline.model_dump(),
+            tornado_items=[item.model_dump() for item in report.tornado_items],
+            combined_scenarios=[sc.model_dump() for sc in report.combined_scenarios],
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Sensitivity analysis failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Sensitivity analysis error: {e}") from e
+
 
 
 

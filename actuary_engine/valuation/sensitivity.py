@@ -1,0 +1,456 @@
+"""
+Multi-Dimensional Stress Testing & Sensitivity Valuation Engine.
+
+Provides the ``SensitivityEngine`` class for evaluating risk-factor perturbations
+across interest rates, mortality scales, lapse multipliers, and expense inflations.
+Generates structured Tornado Chart payloads, key risk indicators (effective duration,
+convexity, DV01), and combined compound macro-stress scenarios.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Optional
+
+import numpy as np
+from pydantic import BaseModel, Field
+
+from actuary_engine.models.assumptions import (
+    ExpenseAssumption,
+    InterestAssumption,
+    LapseAssumption,
+)
+from actuary_engine.models.contracts import PolicyContract, ProductType
+from actuary_engine.pricing.premium import LevelPremiumCalculator
+from actuary_engine.tables.commutation import CommutationFunctions
+from actuary_engine.tables.mortality_table import MortalityTable
+from actuary_engine.valuation.gpv import GrossPremiumValuation
+
+
+class SensitivityBaselineMetrics(BaseModel):
+    """Baseline valuation indicators before applying stress shocks."""
+
+    base_reserve: float = Field(description="Baseline Best Estimate Liability (BEL).")
+    annual_net_premium: float = Field(description="Annual equivalence net premium P.")
+    annual_gross_premium: float = Field(description="Annual loaded gross premium.")
+    effective_duration: float = Field(description="Effective liability duration in years.")
+    effective_convexity: float = Field(description="Effective liability convexity.")
+    dv01: float = Field(description="Dollar Value of a 1 basis point shift in interest rate.")
+    pv_future_benefits: float = Field(description="PV of claims and maturity benefits.")
+    pv_future_premiums: float = Field(description="PV of premium inflows.")
+    pv_future_expenses: float = Field(description="PV of acquisition and maintenance expenses.")
+
+
+class TornadoItem(BaseModel):
+    """Single risk-factor sensitivity perturbation item for Tornado Chart rendering."""
+
+    risk_factor: str = Field(description="Name of the risk factor under test.")
+    category: str = Field(description="Category (MARKET, MORTALITY, POLICYHOLDER, EXPENSE, CATASTROPHE).")
+    low_label: str = Field(description="Description of the downside / low shock.")
+    high_label: str = Field(description="Description of the upside / high shock.")
+    low_reserve: float = Field(description="Reserve liability under low shock.")
+    high_reserve: float = Field(description="Reserve liability under high shock.")
+    low_delta: float = Field(description="Absolute liability shift under low shock (V_low - V_base).")
+    high_delta: float = Field(description="Absolute liability shift under high shock (V_high - V_base).")
+    low_delta_pct: float = Field(description="Percentage shift under low shock.")
+    high_delta_pct: float = Field(description="Percentage shift under high shock.")
+    swing: float = Field(description="Absolute delta swing magnitude |V_high - V_low|.")
+    swing_pct: float = Field(description="Percentage swing relative to base reserve.")
+
+
+class CombinedScenarioResult(BaseModel):
+    """Outcome of a compound macro-stress scenario (multi-factor joint shock)."""
+
+    scenario_id: str
+    name: str
+    description: str
+    rate_shift_bps: float
+    mortality_multiplier: float
+    lapse_multiplier: float
+    expense_multiplier: float
+    shocked_reserve: float
+    delta_reserve: float
+    delta_pct: float
+    solvency_impact: str
+
+
+class SensitivityReport(BaseModel):
+    """Complete stress testing report containing baseline metrics, sorted tornado items, and compound scenarios."""
+
+    table_name: str
+    product_type: str
+    sum_assured: float
+    baseline: SensitivityBaselineMetrics
+    tornado_items: list[TornadoItem]
+    combined_scenarios: list[CombinedScenarioResult]
+
+
+class SensitivityEngine:
+    """Stress testing & sensitivity valuation engine."""
+
+    __slots__ = ("table", "interest", "expense", "lapse")
+
+    def __init__(
+        self,
+        table: MortalityTable,
+        interest: InterestAssumption,
+        expense: Optional[ExpenseAssumption] = None,
+        lapse: Optional[LapseAssumption] = None,
+    ) -> None:
+        """Initialize SensitivityEngine.
+
+        Args:
+            table: Parsed baseline MortalityTable.
+            interest: Baseline InterestAssumption.
+            expense: Baseline ExpenseAssumption.
+            lapse: Baseline LapseAssumption.
+        """
+        self.table = table
+        self.interest = interest
+        self.expense = expense or ExpenseAssumption()
+        self.lapse = lapse or LapseAssumption()
+
+    def evaluate_point(
+        self,
+        contract: PolicyContract,
+        gross_premium: Optional[float] = None,
+        interest_shift: float = 0.0,
+        mortality_mult: float = 1.0,
+        mortality_add: float = 0.0,
+        lapse_mult: float = 1.0,
+        lapse_mass_y1: float = 0.0,
+        expense_mult: float = 1.0,
+    ) -> dict[str, float]:
+        """Evaluate valuation metrics under a specific parameter perturbation.
+
+        Args:
+            contract: PolicyContract specification.
+            gross_premium: Annual gross premium (if None, priced on base assumptions).
+            interest_shift: Parallel shift in annual interest rate (e.g. +0.01 for +100 bps).
+            mortality_mult: Multiplicative scale on qx array (e.g. 1.20 for +20%).
+            mortality_add: Additive shift on qx array (e.g. +0.002 for pandemic).
+            lapse_mult: Multiplicative scale on lapse rates.
+            lapse_mass_y1: Instantaneous surge added to year-1 lapse rate.
+            expense_mult: Multiplicative scale on expenses.
+
+        Returns:
+            Dictionary containing 'reserve', 'pvfb', 'pvfe', 'pvfp', 'annual_net_premium', 'gross_premium'.
+        """
+        base_rate = getattr(self.interest, "annual_rate", 0.05)
+        shocked_rate = max(0.0001, base_rate + interest_shift)
+        shocked_interest = InterestAssumption(annual_rate=shocked_rate)
+
+        # 1. Mortality Shock Table
+        if mortality_mult != 1.0 or mortality_add != 0.0:
+            qx_shocked = np.clip(self.table.qx * mortality_mult + mortality_add, 0.0, 1.0)
+            qx_shocked[-1] = 1.0  # Terminal closure
+            shocked_table = MortalityTable(
+                ages=self.table.ages,
+                qx=qx_shocked,
+                name=f"{self.table.name}_shocked",
+                radix=self.table.radix,
+            )
+        else:
+            shocked_table = self.table
+
+        # 2. Expense Shock
+        if expense_mult != 1.0:
+            shocked_expense = ExpenseAssumption(
+                percent_of_premium_first=min(1.0, self.expense.percent_of_premium_first * expense_mult),
+                percent_of_premium_renewal=min(1.0, self.expense.percent_of_premium_renewal * expense_mult),
+                per_policy_first=self.expense.per_policy_first * expense_mult,
+                per_policy_renewal=self.expense.per_policy_renewal * expense_mult,
+            )
+        else:
+            shocked_expense = self.expense
+
+        # 3. Lapse Shock
+        if lapse_mult != 1.0 or lapse_mass_y1 != 0.0:
+            if self.lapse.duration_rates is not None:
+                dur_rates = [min(0.95, r * lapse_mult) for r in self.lapse.duration_rates]
+                if lapse_mass_y1 > 0 and len(dur_rates) > 0:
+                    dur_rates[0] = min(0.95, dur_rates[0] + lapse_mass_y1)
+                shocked_lapse = LapseAssumption(
+                    flat_annual_rate=min(0.95, self.lapse.flat_annual_rate * lapse_mult),
+                    duration_rates=dur_rates,
+                )
+            else:
+                shocked_lapse = LapseAssumption(
+                    flat_annual_rate=min(0.95, self.lapse.flat_annual_rate * lapse_mult + lapse_mass_y1),
+                )
+        else:
+            shocked_lapse = self.lapse
+
+        # Resolve effective gross premium and net premium
+        comm = CommutationFunctions(shocked_table, shocked_interest)
+        pricer = LevelPremiumCalculator(comm)
+        net_res = pricer.price_contract(contract)
+
+        eff_gp = gross_premium
+        if eff_gp is None:
+            eff_gp = net_res.annual_premium * 1.20
+
+        # Project GPV cash flows
+        gpv = GrossPremiumValuation(
+            table=shocked_table,
+            interest=shocked_interest,
+            expense=shocked_expense,
+            lapse=shocked_lapse,
+        )
+        cf_df = gpv.project(contract, eff_gp)
+
+        pvfb = float(cf_df["pv_death_claims"].sum() + cf_df["pv_maturity"].sum() + cf_df["pv_lapse_payouts"].sum())
+        pvfe = float(cf_df["pv_expense"].sum())
+        pvfp = float(cf_df["pv_premium"].sum())
+        bel = pvfb + pvfe - pvfp
+
+        return {
+            "reserve": bel,
+            "pvfb": pvfb,
+            "pvfe": pvfe,
+            "pvfp": pvfp,
+            "annual_net_premium": net_res.annual_premium,
+            "gross_premium": eff_gp,
+        }
+
+    def run_tornado_analysis(
+        self,
+        contract: PolicyContract,
+        gross_premium: Optional[float] = None,
+    ) -> SensitivityReport:
+        """Run systematic one-at-a-time (OAT) parameter sensitivity shocks for Tornado Chart.
+
+        Args:
+            contract: PolicyContract specification.
+            gross_premium: Optional user-specified annual gross premium.
+
+        Returns:
+            SensitivityReport with sorted tornado items and key sensitivity metrics.
+        """
+        # 1. Base Valuation Point
+        base_res = self.evaluate_point(contract, gross_premium=gross_premium)
+        v_base = base_res["reserve"]
+        abs_base = max(1.0, abs(v_base))
+
+        # 2. Key Duration & Convexity Metrics (Using +-100 bps shifts)
+        delta_i = 0.01  # 100 bps
+        res_plus_i = self.evaluate_point(contract, gross_premium=gross_premium, interest_shift=delta_i)
+        res_minus_i = self.evaluate_point(contract, gross_premium=gross_premium, interest_shift=-delta_i)
+
+        pv_outgo_base = base_res["pvfb"] + base_res["pvfe"]
+        pv_outgo_plus = res_plus_i["pvfb"] + res_plus_i["pvfe"]
+        pv_outgo_minus = res_minus_i["pvfb"] + res_minus_i["pvfe"]
+
+        # Effective Duration & Convexity formulas on liability obligations
+        eff_duration = -(pv_outgo_plus - pv_outgo_minus) / (2.0 * delta_i * max(1.0, pv_outgo_base))
+        eff_convexity = (pv_outgo_plus + pv_outgo_minus - 2.0 * pv_outgo_base) / ((delta_i ** 2) * max(1.0, pv_outgo_base))
+        dv01 = abs(pv_outgo_minus - pv_outgo_plus) / 200.0  # dollar impact per 1 bp
+
+        baseline = SensitivityBaselineMetrics(
+            base_reserve=round(v_base, 2),
+            annual_net_premium=round(base_res["annual_net_premium"], 2),
+            annual_gross_premium=round(base_res["gross_premium"], 2),
+            effective_duration=round(eff_duration, 3),
+            effective_convexity=round(eff_convexity, 3),
+            dv01=round(dv01, 2),
+            pv_future_benefits=round(base_res["pvfb"], 2),
+            pv_future_premiums=round(base_res["pvfp"], 2),
+            pv_future_expenses=round(base_res["pvfe"], 2),
+        )
+
+        # 3. Tornado Shock Definitions
+        shocks_to_run = [
+            {
+                "risk_factor": "Discount Rate (±100 bps)",
+                "category": "MARKET",
+                "low_label": "-100 bps",
+                "high_label": "+100 bps",
+                "low_kwargs": {"interest_shift": -0.01},
+                "high_kwargs": {"interest_shift": +0.01},
+            },
+            {
+                "risk_factor": "Discount Rate (±200 bps)",
+                "category": "MARKET",
+                "low_label": "-200 bps",
+                "high_label": "+200 bps",
+                "low_kwargs": {"interest_shift": -0.02},
+                "high_kwargs": {"interest_shift": +0.02},
+            },
+            {
+                "risk_factor": "Mortality Rate (±20%)",
+                "category": "MORTALITY",
+                "low_label": "-20% qx",
+                "high_label": "+20% qx",
+                "low_kwargs": {"mortality_mult": 0.80},
+                "high_kwargs": {"mortality_mult": 1.20},
+            },
+            {
+                "risk_factor": "Lapse / Surrender Rate (±50%)",
+                "category": "POLICYHOLDER",
+                "low_label": "-50% Lapse",
+                "high_label": "+50% Lapse",
+                "low_kwargs": {"lapse_mult": 0.50},
+                "high_kwargs": {"lapse_mult": 1.50},
+            },
+            {
+                "risk_factor": "Acquisition & Maint. Expenses (±20%)",
+                "category": "EXPENSE",
+                "low_label": "-20% Expenses",
+                "high_label": "+20% Expenses",
+                "low_kwargs": {"expense_mult": 0.80},
+                "high_kwargs": {"expense_mult": 1.20},
+            },
+            {
+                "risk_factor": "Mass Surrender Event (+30% Y1)",
+                "category": "CATASTROPHE",
+                "low_label": "Base",
+                "high_label": "+30% Year 1 Surrender",
+                "low_kwargs": {},
+                "high_kwargs": {"lapse_mass_y1": 0.30},
+            },
+            {
+                "risk_factor": "Pandemic Mortality Spike (+2‰)",
+                "category": "CATASTROPHE",
+                "low_label": "Base",
+                "high_label": "+2‰ Flat Death Spike",
+                "low_kwargs": {},
+                "high_kwargs": {"mortality_add": 0.002},
+            },
+        ]
+
+        tornado_items: list[TornadoItem] = []
+        for shock in shocks_to_run:
+            low_eval = self.evaluate_point(contract, gross_premium=gross_premium, **shock["low_kwargs"])
+            high_eval = self.evaluate_point(contract, gross_premium=gross_premium, **shock["high_kwargs"])
+
+            v_l = low_eval["reserve"]
+            v_h = high_eval["reserve"]
+
+            delta_l = v_l - v_base
+            delta_h = v_h - v_base
+            swing = abs(v_h - v_l)
+            swing_pct = (swing / abs_base) * 100.0
+
+            tornado_items.append(
+                TornadoItem(
+                    risk_factor=shock["risk_factor"],
+                    category=shock["category"],
+                    low_label=shock["low_label"],
+                    high_label=shock["high_label"],
+                    low_reserve=round(v_l, 2),
+                    high_reserve=round(v_h, 2),
+                    low_delta=round(delta_l, 2),
+                    high_delta=round(delta_h, 2),
+                    low_delta_pct=round((delta_l / abs_base) * 100.0, 2),
+                    high_delta_pct=round((delta_h / abs_base) * 100.0, 2),
+                    swing=round(swing, 2),
+                    swing_pct=round(swing_pct, 2),
+                )
+            )
+
+        # Sort descending by swing magnitude for proper Tornado layout
+        tornado_items.sort(key=lambda x: x.swing, reverse=True)
+
+        # 4. Compound Combined Stress Scenarios
+        combined_scenarios = self.run_combined_scenarios(contract, gross_premium=gross_premium)
+
+        return SensitivityReport(
+            table_name=self.table.name,
+            product_type=contract.product_type.value,
+            sum_assured=contract.sum_assured,
+            baseline=baseline,
+            tornado_items=tornado_items,
+            combined_scenarios=combined_scenarios,
+        )
+
+    def run_combined_scenarios(
+        self,
+        contract: PolicyContract,
+        gross_premium: Optional[float] = None,
+    ) -> list[CombinedScenarioResult]:
+        """Evaluate compound multi-factor stress packages (e.g. Solvency II, Stagflation, Pandemic)."""
+        base_res = self.evaluate_point(contract, gross_premium=gross_premium)
+        v_base = base_res["reserve"]
+        abs_base = max(1.0, abs(v_base))
+
+        scenarios_defs = [
+            {
+                "scenario_id": "stagflation_crisis",
+                "name": "Stagflation Crisis",
+                "description": "Interest rate drops -100 bps with +20% expense inflation and +30% lapses.",
+                "rate_shift_bps": -100.0,
+                "mortality_mult": 1.0,
+                "lapse_mult": 1.30,
+                "expense_mult": 1.20,
+                "eval_kwargs": {"interest_shift": -0.01, "lapse_mult": 1.30, "expense_mult": 1.20},
+                "solvency_impact": "HIGH RISK",
+            },
+            {
+                "scenario_id": "pandemic_surge",
+                "name": "Severe Pandemic Shock",
+                "description": "Mortality spikes +30%, interest rates ease -50 bps, and lapses decline -20%.",
+                "rate_shift_bps": -50.0,
+                "mortality_mult": 1.30,
+                "lapse_mult": 0.80,
+                "expense_mult": 1.0,
+                "eval_kwargs": {"mortality_mult": 1.30, "interest_shift": -0.005, "lapse_mult": 0.80},
+                "solvency_impact": "HIGH RISK",
+            },
+            {
+                "scenario_id": "mass_lapse_run",
+                "name": "Disintermediation & Mass Surrender",
+                "description": "Market rate spikes +150 bps triggering +40% Year 1 policy surrender surge.",
+                "rate_shift_bps": +150.0,
+                "mortality_mult": 1.0,
+                "lapse_mult": 1.50,
+                "expense_mult": 1.0,
+                "eval_kwargs": {"interest_shift": +0.015, "lapse_mult": 1.50, "lapse_mass_y1": 0.40},
+                "solvency_impact": "MODERATE RISK",
+            },
+            {
+                "scenario_id": "regulator_standard_stress",
+                "name": "Solvency II / OJK Standard Stress",
+                "description": "Rate -150 bps, Mortality +15%, Lapse +50%, Expense +10%.",
+                "rate_shift_bps": -150.0,
+                "mortality_mult": 1.15,
+                "lapse_mult": 1.50,
+                "expense_mult": 1.10,
+                "eval_kwargs": {"interest_shift": -0.015, "mortality_mult": 1.15, "lapse_mult": 1.50, "expense_mult": 1.10},
+                "solvency_impact": "HIGH RISK",
+            },
+            {
+                "scenario_id": "economic_boom",
+                "name": "Economic Expansion (Bull Market)",
+                "description": "Rate +100 bps, Mortality improves -10%, Expense efficiencies -10%.",
+                "rate_shift_bps": +100.0,
+                "mortality_mult": 0.90,
+                "lapse_mult": 0.90,
+                "expense_mult": 0.90,
+                "eval_kwargs": {"interest_shift": +0.01, "mortality_mult": 0.90, "lapse_mult": 0.90, "expense_mult": 0.90},
+                "solvency_impact": "FAVORABLE",
+            },
+        ]
+
+        results: list[CombinedScenarioResult] = []
+        for sc in scenarios_defs:
+            shock_eval = self.evaluate_point(contract, gross_premium=gross_premium, **sc["eval_kwargs"])
+            v_s = shock_eval["reserve"]
+            delta = v_s - v_base
+            delta_pct = (delta / abs_base) * 100.0
+
+            results.append(
+                CombinedScenarioResult(
+                    scenario_id=sc["scenario_id"],
+                    name=sc["name"],
+                    description=sc["description"],
+                    rate_shift_bps=sc["rate_shift_bps"],
+                    mortality_multiplier=sc["mortality_mult"],
+                    lapse_multiplier=sc["lapse_mult"],
+                    expense_multiplier=sc["expense_mult"],
+                    shocked_reserve=round(v_s, 2),
+                    delta_reserve=round(delta, 2),
+                    delta_pct=round(delta_pct, 2),
+                    solvency_impact=sc["solvency_impact"],
+                )
+            )
+
+        return results
