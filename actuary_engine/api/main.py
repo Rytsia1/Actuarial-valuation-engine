@@ -31,6 +31,8 @@ from actuary_engine.api.schemas import (
     AsyncJobStatusResponse,
     DeterministicValuationRequest,
     DeterministicValuationResponse,
+    LeeCarterForecastRequest,
+    LeeCarterForecastResponse,
     PortfolioValuationJSONRequest,
     PortfolioValuationResponse,
     StochasticValuationRequest,
@@ -43,6 +45,7 @@ from actuary_engine.models.contracts import PolicyContract
 from actuary_engine.pricing.premium import LevelPremiumCalculator
 from actuary_engine.stochastic.dynamic_lapse import DynamicLapseModel
 from actuary_engine.stochastic.esg import VasicekESG
+from actuary_engine.stochastic.lee_carter import LeeCarterModel
 from actuary_engine.stochastic.monte_carlo import StochasticValuationEngine
 from actuary_engine.tables.commutation import CommutationFunctions
 from actuary_engine.tables.mortality_table import MortalityTable
@@ -685,3 +688,51 @@ def download_sample_portfolio_csv(n_policies: int = 1000) -> Response:
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename=sample_portfolio_{n_policies}.csv"},
     )
+
+
+# ────────────────────────────────────────────────────────────
+# Lee-Carter Stochastic Mortality Forecast Endpoint
+# ────────────────────────────────────────────────────────────
+
+@app.post("/api/v1/mortality/lee-carter/forecast", response_model=LeeCarterForecastResponse)
+def forecast_lee_carter_mortality(request: LeeCarterForecastRequest) -> LeeCarterForecastResponse:
+    """Fit Lee-Carter stochastic mortality model and project future longevity improvement rates."""
+    table_id = request.table_id or "soa_ilt"
+    try:
+        table = table_registry.get_table(table_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=f"Mortality table '{table_id}' not found.") from e
+
+    try:
+        ages = np.arange(table.min_age, table.omega, dtype=np.int64)
+        historical_years = np.arange(request.base_year - 30, request.base_year, dtype=np.int64)
+
+        # Generate mortality surface calibrated to table
+        m_matrix = LeeCarterModel.generate_synthetic_historical_matrix(
+            ages=ages,
+            years=historical_years,
+            base_table=table,
+            annual_improvement=request.annual_improvement,
+            seed=request.seed or 42,
+        )
+
+        model = LeeCarterModel()
+        fit_result = model.fit(m_matrix, ages, historical_years)
+        summary = model.forecast_summary(
+            n_ahead=request.n_ahead,
+            n_scenarios=request.n_scenarios,
+            seed=request.seed or 42,
+        )
+
+        return LeeCarterForecastResponse(
+            table_id=table_id,
+            table_name=table.name,
+            fit=fit_result.model_dump(),
+            forecast=summary.model_dump(),
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Lee-Carter forecasting failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Lee-Carter modeling error: {e}") from e
+

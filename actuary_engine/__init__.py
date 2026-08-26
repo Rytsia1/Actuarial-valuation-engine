@@ -22,6 +22,11 @@ from actuary_engine.pricing.premium import LevelPremiumCalculator, PremiumResult
 from actuary_engine.projections.cash_flow import CashFlowProjector
 from actuary_engine.stochastic.dynamic_lapse import DynamicLapseModel, DynamicLapseParams
 from actuary_engine.stochastic.esg import VasicekESG, VasicekParams
+from actuary_engine.stochastic.lee_carter import (
+    LeeCarterFitResult,
+    LeeCarterForecastSummary,
+    LeeCarterModel,
+)
 from actuary_engine.stochastic.monte_carlo import (
     RiskMetricsResult,
     StochasticValuationEngine,
@@ -72,4 +77,7 @@ __all__ = [
     "DynamicLapseModel",
     "RiskMetricsResult",
     "StochasticValuationEngine",
+    "LeeCarterModel",
+    "LeeCarterFitResult",
+    "LeeCarterForecastSummary",
 ]

@@ -199,3 +199,28 @@ class PortfolioValuationResponse(BaseModel):
     age_breakdown: dict[str, dict[str, Any]]
     duration_breakdown: dict[str, dict[str, Any]]
     sample_seriatim: list[dict[str, Any]]
+
+
+# ────────────────────────────────────────────────────────────
+# Lee-Carter Mortality Forecast Schemas
+# ────────────────────────────────────────────────────────────
+
+class LeeCarterForecastRequest(BaseModel):
+    """Request payload for Lee-Carter stochastic mortality improvement forecasting."""
+
+    table_id: str = Field(default="soa_ilt", description="Base mortality table identifier.")
+    n_ahead: int = Field(default=30, ge=1, le=100, description="Forecast horizon in future calendar years.")
+    n_scenarios: int = Field(default=1000, ge=50, le=10000, description="Number of Monte Carlo paths for kappa_t.")
+    base_year: int = Field(default=2024, ge=1900, le=2100, description="Base calibration calendar year.")
+    annual_improvement: float = Field(default=0.012, ge=0.0, le=0.08, description="Historical annual improvement rate assumption.")
+    seed: Optional[int] = Field(default=42, description="Random seed for reproducibility.")
+
+
+class LeeCarterForecastResponse(BaseModel):
+    """Response schema for Lee-Carter mortality model fit and forecasted trajectories."""
+
+    table_id: str
+    table_name: str
+    fit: dict[str, Any]
+    forecast: dict[str, Any]
+
