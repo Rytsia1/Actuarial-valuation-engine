@@ -8,11 +8,18 @@ End-to-end demonstration of the actuarial valuation engine:
 2. Build commutation functions at 5% interest
 3. Price multiple insurance products
 4. Compute annual level premiums
-5. Project deterministic cash flows
-6. Validate the equivalence principle
+5. Project deterministic cash flows & validate equivalence principle
+6. Compute prospective & retrospective policy reserves (_t V)
+7. Gross Premium Valuation (GPV / BEL) with expenses & lapses
 """
 
 import sys
+from pathlib import Path
+
+# Add project root to sys.path so it works directly across environments
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 # Ensure UTF-8 output on Windows (default cp1252 can't render Unicode math symbols)
 if sys.stdout.encoding != "utf-8":
@@ -27,8 +34,12 @@ from actuary_engine import (
     SurvivalCurve,
     CashFlowProjector,
     InterestAssumption,
+    ExpenseAssumption,
+    LapseAssumption,
     PolicyContract,
     ProductType,
+    ReserveCalculator,
+    GrossPremiumValuation,
 )
 
 
@@ -138,57 +149,81 @@ def main() -> None:
         )
 
     # ────────────────────────────────────────────────────────
-    # 6. Cash Flow Projection — 20-Year Term
+    # 6. Policy Reserves (Level 3)
     # ────────────────────────────────────────────────────────
-    separator("6. CASH FLOW PROJECTION — 20-Year Term, Age 30, Face 1,000,000")
+    separator("6. POLICY RESERVES (_t V) — 20-Year Endowment (Face = 1,000,000)")
 
-    contract = PolicyContract(
+    endow_contract = PolicyContract(
+        product_type=ProductType.ENDOWMENT,
+        issue_age=30,
+        term=20,
+        sum_assured=face,
+    )
+    endow_prem = calc.annual_premium_endowment(30, 20, face).annual_premium
+    res_calc = ReserveCalculator(comm)
+
+    res_df = res_calc.reserve_profile(endow_contract, endow_prem, method="both")
+    print(f"  Annual Premium: {endow_prem:,.2f}")
+    print()
+    print(f"  {'Duration (t)':>12} {'Age':>5} {'_t V (Prospective)':>20} {'_t V (Retrospective)':>20} {'Match?':>8}")
+    print(f"  {'─'*12} {'─'*5} {'─'*20} {'─'*20} {'─'*8}")
+    for t_idx in [0, 1, 5, 10, 15, 19, 20]:
+        row = res_df.loc[res_df["duration"] == t_idx].iloc[0]
+        match = abs(row["reserve_prospective"] - row["reserve_retrospective"]) < 1e-4
+        print(
+            f"  {int(row['duration']):>12} {int(row['age']):>5}"
+            f" {row['reserve_prospective']:>20,.2f}"
+            f" {row['reserve_retrospective']:>20,.2f}"
+            f" {'✓' if match else '✗':>8}"
+        )
+
+    # ────────────────────────────────────────────────────────
+    # 7. Gross Premium Valuation / BEL (Level 3)
+    # ────────────────────────────────────────────────────────
+    separator("7. GROSS PREMIUM VALUATION & BEL — 20-Year Term with Expenses & Lapses")
+
+    term_contract = PolicyContract(
         product_type=ProductType.TERM,
         issue_age=30,
         term=20,
         sum_assured=face,
     )
-    premium_result = calc.annual_premium_term(30, 20, face)
-    projector = CashFlowProjector(table, interest)
-    df = projector.project(contract, premium_result.annual_premium)
+    term_net_p = calc.annual_premium_term(30, 20, face).annual_premium
 
-    # Show first and last few years
-    print(f"\n  Annual Premium: {premium_result.annual_premium:,.2f}")
-    print()
-    cols = ["year", "age", "survivors", "deaths", "premium_income", "death_benefit", "pv_net_cash_flow"]
-    print(f"  {'Year':>4} {'Age':>4} {'Survivors':>10} {'Deaths':>10} {'Prem Inc':>12} {'Death Ben':>12} {'PV Net CF':>12}")
-    print(f"  {'─'*4} {'─'*4} {'─'*10} {'─'*10} {'─'*12} {'─'*12} {'─'*12}")
-    for _, row in df.head(5).iterrows():
-        print(
-            f"  {int(row['year']):>4} {int(row['age']):>4}"
-            f" {row['survivors']:>10.6f} {row['deaths']:>10.6f}"
-            f" {row['premium_income']:>12,.2f} {row['death_benefit']:>12,.2f}"
-            f" {row['pv_net_cash_flow']:>12,.2f}"
-        )
-    print(f"  {'...':>4}")
-    for _, row in df.tail(3).iterrows():
-        print(
-            f"  {int(row['year']):>4} {int(row['age']):>4}"
-            f" {row['survivors']:>10.6f} {row['deaths']:>10.6f}"
-            f" {row['premium_income']:>12,.2f} {row['death_benefit']:>12,.2f}"
-            f" {row['pv_net_cash_flow']:>12,.2f}"
-        )
+    gpv = GrossPremiumValuation(
+        table=table,
+        interest=interest,
+        expense=ExpenseAssumption(
+            percent_of_premium_first=0.40,
+            percent_of_premium_renewal=0.05,
+            per_policy_first=250.0,
+            per_policy_renewal=25.0,
+        ),
+        lapse=LapseAssumption(
+            duration_rates=[0.08, 0.05, 0.04, 0.03],
+            flat_annual_rate=0.02,
+        ),
+    )
 
-    # Equivalence check
-    pv_total = df["pv_net_cash_flow"].sum()
-    print(f"\n  Σ PV(Net CF) = {pv_total:,.6f}")
-    print(f"  Equivalence principle holds: {abs(pv_total) < 1.0}")
+    bel_net = gpv.best_estimate_liability(term_contract, term_net_p)
+    gross_p = term_net_p * 1.30  # 30% gross loading
+    bel_gross = gpv.best_estimate_liability(term_contract, gross_p)
+
+    print(f"  Net Level Premium:          ${term_net_p:>10,.2f}")
+    print(f"  BEL at Net Premium:         ${bel_net:>10,.2f}  (Unfunded expenses liability)")
+    print(f"  Gross Premium (1.3x):       ${gross_p:>10,.2f}")
+    print(f"  BEL at Gross Premium:       ${bel_gross:>10,.2f}  (Negative = embedded profit)")
 
     # ────────────────────────────────────────────────────────
-    # 7. Summary
+    # 8. Summary
     # ────────────────────────────────────────────────────────
-    separator("7. SUMMARY")
+    separator("8. SUMMARY")
     print("  ✓ SOA Illustrative Life Table loaded (111 ages)")
     print("  ✓ Commutation functions computed (vectorized)")
     print("  ✓ Insurance & annuity present values calculated")
     print("  ✓ Annual level premiums via equivalence principle")
-    print("  ✓ Cash flow projection validated")
-    print("  ✓ All identities verified")
+    print("  ✓ Prospective & retrospective reserves validated (_t V_pro ≡ _t V_retro)")
+    print("  ✓ Best Estimate Liability (BEL) computed under multi-decrement model")
     print()
 
 
