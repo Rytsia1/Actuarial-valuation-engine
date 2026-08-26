@@ -234,6 +234,25 @@ class VasicekESG:
 
         return discount_factors
 
+    @staticmethod
+    def discount_factor_paths(rate_paths: np.ndarray, dt: float = 1.0) -> np.ndarray:
+        """Compute cumulative stochastic discount factors D(0, t) = exp(-sum r_k * dt).
+
+        Args:
+            rate_paths: Array of shape (n_scenarios, n_steps + 1).
+            dt: Time step size.
+
+        Returns:
+            Array of shape (n_scenarios, n_steps + 1) with discount factors starting at 1.0.
+        """
+        n_scenarios, n_cols = rate_paths.shape
+        df_paths = np.empty((n_scenarios, n_cols), dtype=np.float64)
+        df_paths[:, 0] = 1.0
+
+        cum_integral = np.cumsum(rate_paths[:, :-1] * dt, axis=1)
+        df_paths[:, 1:] = np.exp(-cum_integral)
+        return df_paths
+
     def analytical_mean(self, t: float) -> float:
         """Compute the theoretical analytical expectation E[r(t)].
 

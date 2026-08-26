@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import threading
 from typing import Any, Optional
+import numpy as np
 from pydantic import BaseModel, Field
 
 from actuary_engine.tables.mortality_table import MortalityTable

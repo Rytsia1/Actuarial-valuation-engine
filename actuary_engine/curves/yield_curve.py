@@ -154,8 +154,8 @@ class MarketYieldCurve:
         f_plus = self.instantaneous_forward_rate(t_flat + eps)
         f_minus = self.instantaneous_forward_rate(np.maximum(0.0, t_flat - eps))
 
-        df_dt = (f_plus - f_minus) / (2.0 * eps)
-        return float(df_dt[0]) if is_scalar else df_dt
+        df_dt = np.asarray((f_plus - f_minus) / (2.0 * eps), dtype=np.float64)
+        return float(df_dt.flat[0]) if is_scalar else df_dt
 
     @classmethod
     def from_flat_rate(cls, rate: float = 0.05) -> MarketYieldCurve:

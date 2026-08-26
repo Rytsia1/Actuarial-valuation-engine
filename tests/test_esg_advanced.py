@@ -177,3 +177,26 @@ class TestESGSimulationAPI:
         assert data["model_type"] == "CIR"
         assert len(data["fan_chart_rates"]) == 11
         assert data["feller_condition_satisfied"] is True
+
+    def test_simulate_vasicek_endpoint(self) -> None:
+        client = TestClient(app)
+        payload = {
+            "model_type": "VASICEK",
+            "r0": 0.05,
+            "a": 0.20,
+            "theta": 0.05,
+            "sigma": 0.015,
+            "n_years": 10,
+            "n_scenarios": 200,
+            "dt": 1.0,
+            "seed": 42,
+        }
+
+        response = client.post("/api/v1/esg/simulate", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["model_type"] == "VASICEK"
+        assert len(data["fan_chart_rates"]) == 11
+        assert len(data["sample_paths"]) == 10
+        assert "simulated_discount_factors" in data

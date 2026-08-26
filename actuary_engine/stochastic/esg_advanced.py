@@ -86,13 +86,13 @@ class HullWhite1FModel:
         is_scalar = t_arr.ndim == 0
         t_flat = np.atleast_1d(t_arr)
 
-        f0_t = self.yield_curve.instantaneous_forward_rate(t_flat)
-        df_dt = self.yield_curve.forward_rate_derivative(t_flat)
+        f0_t = np.asarray(self.yield_curve.instantaneous_forward_rate(t_flat), dtype=np.float64)
+        df_dt = np.asarray(self.yield_curve.forward_rate_derivative(t_flat), dtype=np.float64)
 
         vol_term = (self.sigma ** 2 / (2.0 * self.a)) * (1.0 - np.exp(-2.0 * self.a * t_flat))
         th = df_dt + self.a * f0_t + vol_term
 
-        return float(th[0]) if is_scalar else th
+        return float(th.flat[0]) if is_scalar else th
 
     def alpha(self, t: Union[float, np.ndarray]) -> Union[float, np.ndarray]:
         """Auxiliary function alpha(t) = f(0,t) + (sigma^2 / (2a^2)) * (1 - exp(-at))^2."""
@@ -100,10 +100,10 @@ class HullWhite1FModel:
         is_scalar = t_arr.ndim == 0
         t_flat = np.atleast_1d(t_arr)
 
-        f0_t = self.yield_curve.instantaneous_forward_rate(t_flat)
+        f0_t = np.asarray(self.yield_curve.instantaneous_forward_rate(t_flat), dtype=np.float64)
         vol_adj = (self.sigma ** 2 / (2.0 * (self.a ** 2))) * ((1.0 - np.exp(-self.a * t_flat)) ** 2)
         al = f0_t + vol_adj
-        return float(al[0]) if is_scalar else al
+        return float(al.flat[0]) if is_scalar else al
 
     def simulate_paths(
         self,
@@ -138,7 +138,7 @@ class HullWhite1FModel:
         step_std = math.sqrt(step_var)
         decay = math.exp(-self.a * dt)
 
-        alpha_vals = self.alpha(time_grid)
+        alpha_vals = np.asarray(self.alpha(time_grid), dtype=np.float64)
 
         # Standard Gaussian random shocks
         shocks = rng.normal(0.0, 1.0, size=(n_scenarios, n_steps))

@@ -18,7 +18,7 @@ import asyncio
 import io
 import logging
 from collections.abc import Callable, Coroutine
-from typing import Any, Optional
+from typing import Any, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -54,7 +54,7 @@ from actuary_engine.models.assumptions import ExpenseAssumption, InterestAssumpt
 from actuary_engine.models.contracts import PolicyContract
 from actuary_engine.pricing.premium import LevelPremiumCalculator
 from actuary_engine.stochastic.dynamic_lapse import DynamicLapseModel
-from actuary_engine.stochastic.esg import VasicekESG
+from actuary_engine.stochastic.esg import VasicekESG, VasicekParams
 from actuary_engine.stochastic.esg_advanced import CIRModel, CIRParams, HullWhite1FModel
 from actuary_engine.stochastic.lee_carter import LeeCarterModel
 from actuary_engine.stochastic.monte_carlo import (
@@ -935,12 +935,13 @@ def simulate_esg_paths(request: ESGSimulationRequest) -> ESGSimulationResponse:
                 "mean": round(float(np.mean(col)), 5),
             })
 
-        sample_paths = rate_paths[:10, :].round(5).tolist()
+        sample_paths = np.round(rate_paths[:10, :], 5).tolist()
 
         # 4. Market vs Simulated Discount Factors
         t_arr = np.array(time_grid, dtype=np.float64)
-        market_dfs = curve.zero_price(t_arr).round(5).tolist()
-        sim_dfs = np.mean(df_paths, axis=0).round(5).tolist()
+        zero_prices = np.asarray(curve.zero_price(t_arr), dtype=np.float64)
+        market_dfs = np.round(zero_prices, 5).tolist()
+        sim_dfs = np.round(np.mean(df_paths, axis=0), 5).tolist()
         mae = float(np.mean(np.abs(np.array(market_dfs) - np.array(sim_dfs))))
 
         return ESGSimulationResponse(
