@@ -31,6 +31,7 @@ from actuary_engine.models.assumptions import (
 )
 from actuary_engine.models.contracts import PolicyContract, ProductType
 from actuary_engine.pricing.premium import LevelPremiumCalculator
+from actuary_engine.tables.commutation import CommutationFunctions
 from actuary_engine.tables.mortality_table import MortalityTable
 from actuary_engine.valuation.gpv import GrossPremiumValuation
 
@@ -135,14 +136,11 @@ class IFRS17Engine:
 
         effective_gp = gross_premium
         if effective_gp is None:
-            # Auto-calculate standard loaded gross premium
-            pricer = LevelPremiumCalculator(self.table, self.interest)
-            prem_res = pricer.calculate_gross_premium(
-                contract,
-                expense=self.expense,
-                profit_margin=0.05,
-            )
-            effective_gp = prem_res.gross_premium
+            # Auto-calculate standard loaded gross premium (20% loading over net)
+            comm = CommutationFunctions(self.table, self.interest)
+            pricer = LevelPremiumCalculator(comm)
+            net_res = pricer.price_contract(contract)
+            effective_gp = net_res.annual_premium * 1.20
 
         # Project full multi-decrement cash flows from t=0
         cf_df = gpv.project(contract, effective_gp, surrender_values)
@@ -222,13 +220,10 @@ class IFRS17Engine:
 
         effective_gp = gross_premium
         if effective_gp is None:
-            pricer = LevelPremiumCalculator(self.table, self.interest)
-            prem_res = pricer.calculate_gross_premium(
-                contract,
-                expense=self.expense,
-                profit_margin=0.05,
-            )
-            effective_gp = prem_res.gross_premium
+            comm = CommutationFunctions(self.table, self.interest)
+            pricer = LevelPremiumCalculator(comm)
+            net_res = pricer.price_contract(contract)
+            effective_gp = net_res.annual_premium * 1.20
 
         # Base year-by-year cash flows
         cf_df = gpv.project(contract, effective_gp, surrender_values)

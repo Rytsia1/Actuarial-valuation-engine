@@ -177,3 +177,27 @@ class TestIFRS17API:
         assert data["initial_balance"]["classification"] == "ONEROUS"
         assert data["initial_balance"]["csm_0"] == 0.0
         assert data["initial_balance"]["loss_component_0"] > 0.0
+
+    def test_ifrs17_endpoint_without_gross_premium(self) -> None:
+        """Test endpoint when gross_premium is None (frontend default)."""
+        client = TestClient(app)
+        payload = {
+            "product_type": "endowment",
+            "issue_age": 30,
+            "term": 20,
+            "sum_assured": 1_000_000,
+            "interest_rate": 0.05,
+            "gross_premium": None,
+            "table_id": "soa_ilt",
+            "ra_ratio": 0.06,
+        }
+
+        response = client.post("/api/v1/valuation/ifrs17", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+
+        assert "initial_balance" in data
+        assert "balance_sheet_schedule" in data
+        assert "income_statement_schedule" in data
+        assert len(data["balance_sheet_schedule"]) == 21
+        assert data["initial_balance"]["bel_0"] is not None
