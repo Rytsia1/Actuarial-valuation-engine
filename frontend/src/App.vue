@@ -141,10 +141,10 @@ const navItems = [
   { id: 'stochastic', label: 'ESG & Risk', icon: 'risk' },
   { id: 'sensitivity', label: 'Stress Testing', icon: 'tornado' },
   { id: 'ifrs17', label: 'IFRS 17', icon: 'balance' },
-  { id: 'portfolio', label: 'Portfolio Batch', icon: 'portfolio' },
   { id: 'reserves', label: 'Reserves', icon: 'reserve' },
   { id: 'cashflows', label: 'Cash Flows', icon: 'cashflow' },
   { id: 'table', label: 'Cohort Data', icon: 'table' },
+  { id: 'portfolio', label: 'Portfolio Batch', icon: 'portfolio' },
 ]
 
 // ────────────────────────────────────────────────────────────
@@ -1099,14 +1099,11 @@ onUnmounted(() => {
         <p class="text-sm text-slate-500 mt-1">Actuarial valuation, risk analytics, and regulatory reporting</p>
 
         <div class="mt-4 flex flex-wrap gap-2">
-          <button @click="applyPreset('endowment_20')" class="btn-secondary text-[12px] px-3 py-1.5">20-Yr Endowment</button>
-          <button @click="applyPreset('term_30')" class="btn-secondary text-[12px] px-3 py-1.5">30-Yr Term</button>
-          <button @click="switchTab('builder')" class="btn-primary text-[12px] px-3 py-1.5 flex items-center space-x-1.5">
-            <span>✨</span><span>Logic Builder</span>
-          </button>
-          <button @click="applyPreset('large_scale_10k')" class="btn-secondary text-[12px] px-3 py-1.5">10K Monte Carlo</button>
-          <button @click="switchTab('sensitivity')" class="btn-secondary text-[12px] px-3 py-1.5">Sensitivity Shock</button>
-          <button @click="switchTab('portfolio'); runSamplePortfolioDemo(1000)" class="btn-secondary text-[12px] px-3 py-1.5">Batch Portfolio</button>
+          <button @click="applyPreset('endowment_20')" class="btn-secondary text-[12px] px-3 py-1.5 rounded-md">20-Yr Endowment</button>
+          <button @click="applyPreset('term_30')" class="btn-secondary text-[12px] px-3 py-1.5 rounded-md">30-Yr Term</button>
+          <button @click="applyPreset('large_scale_10k')" class="btn-secondary text-[12px] px-3 py-1.5 rounded-md">10K Monte Carlo</button>
+          <button @click="switchTab('sensitivity')" class="btn-secondary text-[12px] px-3 py-1.5 rounded-md">Sensitivity Shock</button>
+          <button @click="switchTab('portfolio'); runSamplePortfolioDemo(1000)" class="btn-secondary text-[12px] px-3 py-1.5 rounded-md">Batch Portfolio</button>
         </div>
       </div>
 
@@ -1305,7 +1302,13 @@ onUnmounted(() => {
                 </div>
                 <span class="badge badge-info">Vasicek ESG</span>
               </div>
-              <div ref="fanChartRef" class="w-full h-72"></div>
+              <div v-if="!stochasticData && !loading" class="h-72 flex flex-col items-center justify-center text-center space-y-2.5 card-inset rounded-lg">
+                <p class="text-slate-400 text-xs">No stochastic simulation data available.</p>
+                <button @click="executeValuation" class="btn-primary text-xs px-3.5 py-1.5 rounded-md">
+                  Run Valuation Engine
+                </button>
+              </div>
+              <div v-show="stochasticData || loading" ref="fanChartRef" class="w-full h-72"></div>
             </div>
 
             <!-- Distribution -->
@@ -1314,7 +1317,10 @@ onUnmounted(() => {
                 <h3 class="text-sm font-semibold text-white">Liability Distribution &amp; Tail Risk</h3>
                 <p class="text-[11px] text-slate-500">Empirical BEL density — VaR 95% threshold</p>
               </div>
-              <div ref="distChartRef" class="w-full h-72"></div>
+              <div v-if="!stochasticData && !loading" class="h-72 flex flex-col items-center justify-center text-center space-y-2.5 card-inset rounded-lg">
+                <p class="text-slate-400 text-xs">Empirical VaR/CVaR distribution will appear after valuation run.</p>
+              </div>
+              <div v-show="stochasticData || loading" ref="distChartRef" class="w-full h-72"></div>
             </div>
 
             <!-- Cash Flow -->

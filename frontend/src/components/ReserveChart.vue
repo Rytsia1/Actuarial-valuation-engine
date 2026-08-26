@@ -167,18 +167,18 @@ onUnmounted(() => {
     <div class="flex items-center justify-between">
       <div>
         <h3 class="text-sm font-semibold text-white flex items-center space-x-2">
-          <span>Policy Reserve Trajectory (${}_t V$)</span>
+          <span>Policy Reserve Trajectory (tV)</span>
         </h3>
         <p class="text-xs text-slate-400 font-mono">
-          Prospective (${}_t V_{\text{pro}}$) vs. Retrospective (${}_t V_{\text{retro}}$) vs. Gross GPV
+          Prospective (tV_pro) vs. Retrospective (tV_retro) vs. Gross GPV
         </p>
       </div>
       <div class="flex items-center space-x-2">
         <span class="px-2 py-0.5 text-[10px] font-mono rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-          ${}_0 V = 0$
+          V_0 = 0
         </span>
         <span class="px-2 py-0.5 text-[10px] font-mono rounded bg-sky-500/10 text-sky-400 border border-sky-500/20">
-          ${}_t V_{\text{pro}} \equiv {}_t V_{\text{retro}}$
+          tV_pro ≡ tV_retro
         </span>
       </div>
     </div>

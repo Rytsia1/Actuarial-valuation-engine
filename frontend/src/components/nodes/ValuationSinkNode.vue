@@ -48,8 +48,8 @@ const emit = defineEmits(['simulate'])
     <div class="space-y-2 text-[11px]">
       <div class="card-inset p-2 rounded-lg text-[10px] space-y-1">
         <div class="text-slate-400">Net Liability Cash Flow:</div>
-        <div class="font-mono text-indigo-300 font-semibold">NCFₜ = Outgoₜ - Inflowₜ</div>
-        <div class="text-[9px] text-slate-500">BEL = ∑ vᵗ · NCFₜ (Gross Premium Valuation)</div>
+        <div class="font-mono text-indigo-300 font-semibold">NCF(t) = Outflow(t) - Inflow(t)</div>
+        <div class="text-[9px] text-slate-500">BEL = PV(Outflows) - PV(Premiums)</div>
       </div>
 
       <!-- Quick Metrics Preview if simulated -->

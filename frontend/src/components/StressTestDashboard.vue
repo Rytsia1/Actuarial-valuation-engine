@@ -1,6 +1,15 @@
 <script setup>
-import { ref, reactive, watch, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, reactive, watch, onMounted, onUnmounted, nextTick, markRaw } from 'vue'
 import * as echarts from 'echarts'
+import {
+  Scale,
+  TrendingUp,
+  Activity,
+  TrendingDown,
+  AlertTriangle,
+  RotateCcw,
+  Sliders,
+} from 'lucide-vue-next'
 import { runStressTest } from '../services/actuaryApi'
 
 const props = defineProps({
@@ -67,31 +76,31 @@ const presets = [
   {
     id: 'baseline',
     label: 'Baseline (0 Shocks)',
-    icon: '⚖️',
+    icon: markRaw(Scale),
     shocks: { interest_rate_bps: 0.0, mortality_multiplier: 1.0, lapse_multiplier: 1.0, expense_inflation_pct: 0.0 },
   },
   {
     id: 'rising_rates',
     label: 'Rising Rates (+150 bps)',
-    icon: '📈',
+    icon: markRaw(TrendingUp),
     shocks: { interest_rate_bps: 150.0, mortality_multiplier: 1.0, lapse_multiplier: 1.40, expense_inflation_pct: 4.0 },
   },
   {
     id: 'pandemic',
     label: 'Pandemic Crisis',
-    icon: '🦠',
+    icon: markRaw(Activity),
     shocks: { interest_rate_bps: -100.0, mortality_multiplier: 1.60, lapse_multiplier: 1.20, expense_inflation_pct: 6.0 },
   },
   {
     id: 'stagflation',
     label: 'Stagflation Shock',
-    icon: '📉',
+    icon: markRaw(TrendingDown),
     shocks: { interest_rate_bps: -150.0, mortality_multiplier: 1.0, lapse_multiplier: 0.70, expense_inflation_pct: 10.0 },
   },
   {
     id: 'extreme_downside',
     label: 'Extreme Tail Shock',
-    icon: '🌪️',
+    icon: markRaw(AlertTriangle),
     shocks: { interest_rate_bps: -200.0, mortality_multiplier: 2.0, lapse_multiplier: 2.0, expense_inflation_pct: 15.0 },
   },
 ]
@@ -121,22 +130,23 @@ async function fetchStressTest() {
   error.value = null
 
   try {
+    const isWholeLife = props.contractForm.product_type === 'whole_life'
     const payload = {
       product_type: props.contractForm.product_type || 'endowment',
-      issue_age: props.contractForm.issue_age || 30,
-      term: props.contractForm.term || 20,
-      sum_assured: props.contractForm.sum_assured || 1000000,
-      premium_paying_term: props.contractForm.premium_paying_term || null,
-      interest_rate: props.contractForm.interest_rate || 0.05,
-      gross_premium: props.contractForm.gross_premium || null,
+      issue_age: Number(props.contractForm.issue_age ?? 30),
+      term: isWholeLife ? null : Number(props.contractForm.term ?? 20),
+      sum_assured: Number(props.contractForm.sum_assured ?? 1000000),
+      premium_paying_term: props.contractForm.premium_paying_term ? Number(props.contractForm.premium_paying_term) : null,
+      interest_rate: Number(props.contractForm.interest_rate ?? 0.05),
+      gross_premium: props.contractForm.gross_premium ? Number(props.contractForm.gross_premium) : null,
       table_id: props.contractForm.table_id || 'soa_ilt',
       expense: props.contractForm.expense || null,
       lapse: props.contractForm.lapse || null,
       shocks: {
-        interest_rate_bps: Number(shocks.interest_rate_bps),
-        mortality_multiplier: Number(shocks.mortality_multiplier),
-        lapse_multiplier: Number(shocks.lapse_multiplier),
-        expense_inflation_pct: Number(shocks.expense_inflation_pct),
+        interest_rate_bps: Number(shocks.interest_rate_bps || 0),
+        mortality_multiplier: Number(shocks.mortality_multiplier || 1.0),
+        lapse_multiplier: Number(shocks.lapse_multiplier || 1.0),
+        expense_inflation_pct: Number(shocks.expense_inflation_pct || 0),
       },
     }
 
@@ -405,6 +415,20 @@ onUnmounted(() => {
 <template>
   <div class="space-y-6">
 
+    <!-- Error Alert Banner -->
+    <div v-if="error" class="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center justify-between shadow-lg">
+      <div class="flex items-center space-x-2.5">
+        <AlertTriangle class="w-4 h-4 text-rose-400 flex-shrink-0" />
+        <div>
+          <strong class="font-semibold text-rose-200">Stress Test Calculation Error:</strong>
+          <span class="ml-1 text-rose-300/90">{{ error }}</span>
+        </div>
+      </div>
+      <button @click="fetchStressTest" class="btn-secondary text-[11px] px-3 py-1 rounded-md border-rose-500/30 text-rose-200 hover:bg-rose-500/20 transition">
+        Retry
+      </button>
+    </div>
+
     <!-- ═══════════════════════════════════════════════════════ -->
     <!-- 1. TOP CONTROL DECK: INTERACTIVE SHOCK SLIDERS         -->
     <!-- ═══════════════════════════════════════════════════════ -->
@@ -451,9 +475,9 @@ onUnmounted(() => {
           v-for="p in presets"
           :key="p.id"
           @click="applyPreset(p)"
-          class="btn-secondary text-[11px] px-2.5 py-1 rounded-md transition flex items-center space-x-1 hover:bg-slate-700/50"
+          class="btn-secondary text-[11px] px-2.5 py-1 rounded-md transition flex items-center space-x-1.5 hover:bg-slate-700/50"
         >
-          <span>{{ p.icon }}</span>
+          <component :is="p.icon" class="w-3.5 h-3.5 text-slate-400" />
           <span>{{ p.label }}</span>
         </button>
       </div>
@@ -575,6 +599,15 @@ onUnmounted(() => {
       </div>
     </div>
 
+    <!-- Loading Skeleton when initial fetch is running -->
+    <div v-if="loading && !stressData" class="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div v-for="i in 5" :key="i" class="card p-4 space-y-2">
+        <div class="skeleton h-3 w-20"></div>
+        <div class="skeleton h-6 w-28"></div>
+        <div class="skeleton h-2.5 w-16"></div>
+      </div>
+    </div>
+
     <!-- ═══════════════════════════════════════════════════════ -->
     <!-- 2. REAL-TIME KPI STRIP: BASELINE VS. STRESSED          -->
     <!-- ═══════════════════════════════════════════════════════ -->
@@ -644,7 +677,7 @@ onUnmounted(() => {
       <div class="card p-5 space-y-3">
         <div class="flex items-center justify-between pb-2 border-b border-white/[0.06]">
           <div>
-            <h3 class="text-sm font-semibold text-white">Reserve Trajectory Morphing (${}_t V_{\text{gross}}$)</h3>
+            <h3 class="text-sm font-semibold text-white">Gross Reserve Trajectory (tV)</h3>
             <p class="text-[11px] text-slate-500">
               Comparing Baseline (Sky) vs. Stressed Reserve Trajectory (Rose) over time
             </p>
@@ -663,7 +696,7 @@ onUnmounted(() => {
         <div>
           <h3 class="text-sm font-semibold text-white">Duration-by-Duration Liability Comparison</h3>
           <p class="text-[11px] text-slate-500">
-            Policy year $t=0 \dots T$ cash flows and discounted gross liability reserves
+            Policy year t=0..T cash flows and discounted gross liability reserves
           </p>
         </div>
         <span class="text-xs text-slate-500 font-mono">

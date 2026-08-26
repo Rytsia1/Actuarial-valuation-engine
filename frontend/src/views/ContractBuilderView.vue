@@ -4,6 +4,21 @@ import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
 import * as echarts from 'echarts'
+import {
+  FileText,
+  DollarSign,
+  GitFork,
+  ArrowUpRight,
+  TrendingUp,
+  Target,
+  Play,
+  RotateCcw,
+  Sparkles,
+  Layout,
+  Trash2,
+  X,
+  Layers,
+} from 'lucide-vue-next'
 
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
@@ -94,12 +109,12 @@ function clearCanvas() {
 // Drag & Drop Node Palette Handler
 // ────────────────────────────────────────────────────────────
 const paletteItems = [
-  { type: 'policyInput', label: 'Policy Parameters', icon: '📋', badge: 'Source', color: 'border-sky-500/40 text-sky-300' },
-  { type: 'inflow', label: 'Cash Inflow', icon: '💰', badge: 'Inflow', color: 'border-emerald-500/40 text-emerald-300' },
-  { type: 'contingency', label: 'Contingency Splitter', icon: '⚖️', badge: 'Decrement', color: 'border-indigo-500/40 text-indigo-300' },
-  { type: 'outflow', label: 'Benefit Outflow', icon: '💸', badge: 'Outflow', color: 'border-rose-500/40 text-rose-300' },
-  { type: 'accumulator', label: 'Fund Accumulator', icon: '📈', badge: 'Unit-Linked', color: 'border-amber-500/40 text-amber-300' },
-  { type: 'valuationSink', label: 'Valuation Consolidator', icon: '🎯', badge: 'Terminal', color: 'border-indigo-500/60 text-indigo-200' },
+  { type: 'policyInput', label: 'Policy Parameters', icon: markRaw(FileText), badge: 'Source', color: 'border-sky-500/40 text-sky-300' },
+  { type: 'inflow', label: 'Cash Inflow', icon: markRaw(DollarSign), badge: 'Inflow', color: 'border-emerald-500/40 text-emerald-300' },
+  { type: 'contingency', label: 'Contingency Splitter', icon: markRaw(GitFork), badge: 'Decrement', color: 'border-indigo-500/40 text-indigo-300' },
+  { type: 'outflow', label: 'Benefit Outflow', icon: markRaw(ArrowUpRight), badge: 'Outflow', color: 'border-rose-500/40 text-rose-300' },
+  { type: 'accumulator', label: 'Fund Accumulator', icon: markRaw(TrendingUp), badge: 'Unit-Linked', color: 'border-amber-500/40 text-amber-300' },
+  { type: 'valuationSink', label: 'Valuation Consolidator', icon: markRaw(Target), badge: 'Terminal', color: 'border-indigo-500/60 text-indigo-200' },
 ]
 
 function onDragStart(event, nodeType) {
@@ -295,7 +310,7 @@ function renderResultCharts() {
       yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: (v) => `$${(v / 1000).toFixed(0)}k` }, splitLine: chartSplitLine },
       series: [
         {
-          name: 'Gross Reserve (${}_t V_{\\text{gross}})',
+          name: 'Gross Reserve (tV)',
           type: 'line',
           data: data.reserves,
           smooth: true,
@@ -377,37 +392,28 @@ onUnmounted(() => {
       <div class="flex items-center space-x-2">
         <button
           @click="handleAutoLayout"
-          class="btn-secondary text-xs px-3 py-1.5 flex items-center space-x-1.5 hover:border-slate-500"
+          class="btn-secondary text-xs px-3 py-1.5 flex items-center space-x-1.5 hover:border-slate-500 rounded-md"
           title="Auto-organize DAG node layout using Dagre"
         >
-          <svg class="h-3.5 w-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z" />
-          </svg>
+          <Layout class="h-3.5 w-3.5 text-slate-400" />
           <span class="hidden sm:inline">Auto-Layout</span>
         </button>
 
         <button
           @click="clearCanvas"
-          class="btn-secondary text-xs px-2.5 py-1.5 text-slate-400 hover:text-rose-400"
+          class="btn-secondary text-xs px-2.5 py-1.5 text-slate-400 hover:text-rose-400 rounded-md"
           title="Clear all nodes"
         >
-          <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
-          </svg>
+          <Trash2 class="h-3.5 w-3.5" />
         </button>
 
         <button
           @click="runSimulation"
           :disabled="isSimulating"
-          class="btn-primary text-xs px-4 py-1.5 flex items-center space-x-1.5 shadow-lg shadow-sky-500/20"
+          class="btn-primary text-xs px-4 py-1.5 flex items-center space-x-1.5 shadow-lg shadow-sky-500/20 rounded-md"
         >
-          <svg v-if="isSimulating" class="animate-spin h-3.5 w-3.5 text-white" viewBox="0 0 24 24" fill="none">
-            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
-          </svg>
-          <svg v-else class="h-3.5 w-3.5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z" />
-          </svg>
+          <RotateCcw v-if="isSimulating" class="animate-spin h-3.5 w-3.5 text-white" />
+          <Play v-else class="h-3.5 w-3.5 text-white" />
           <span>{{ isSimulating ? 'Simulating...' : 'Run Simulation' }}</span>
         </button>
       </div>
@@ -419,7 +425,9 @@ onUnmounted(() => {
         <span class="h-2 w-2 rounded-full bg-rose-400 animate-pulse"></span>
         <span>{{ simulationError }}</span>
       </div>
-      <button @click="simulationError = null" class="text-slate-400 hover:text-white">✕</button>
+      <button @click="simulationError = null" class="text-slate-400 hover:text-white p-1">
+        <X class="w-3.5 h-3.5" />
+      </button>
     </div>
 
     <!-- ═══════════════════════════════════════════════════════ -->
@@ -443,11 +451,11 @@ onUnmounted(() => {
               item.color
             ]"
           >
-            <div class="flex items-center space-x-2">
-              <span class="text-sm">{{ item.icon }}</span>
+            <div class="flex items-center space-x-2.5">
+              <component :is="item.icon" class="w-4 h-4 text-slate-400" />
               <span class="text-xs font-medium text-slate-200">{{ item.label }}</span>
             </div>
-            <span class="text-[9px] font-mono px-1 py-0.5 rounded bg-white/[0.05] text-slate-400">
+            <span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-white/[0.05] text-slate-400">
               {{ item.badge }}
             </span>
           </div>
@@ -502,7 +510,9 @@ onUnmounted(() => {
         </div>
 
         <div class="flex items-center space-x-3">
-          <button @click="showResultsDrawer = false" class="text-slate-400 hover:text-white p-1">✕</button>
+          <button @click="showResultsDrawer = false" class="text-slate-400 hover:text-white p-1 rounded hover:bg-slate-700">
+            <X class="w-4 h-4" />
+          </button>
         </div>
       </div>
 
@@ -547,11 +557,11 @@ onUnmounted(() => {
         <!-- Charts Grid -->
         <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
           <div class="card p-4 space-y-2">
-            <h4 class="text-xs font-semibold text-white">Cash Flow Waterfall ($NCF_t$)</h4>
+            <h4 class="text-xs font-semibold text-white">Cash Flow Waterfall (NCF_t)</h4>
             <div ref="cashFlowChartRef" class="w-full h-64"></div>
           </div>
           <div class="card p-4 space-y-2">
-            <h4 class="text-xs font-semibold text-white">Gross Reserve Profile (${}_t V_{\text{gross}}$)</h4>
+            <h4 class="text-xs font-semibold text-white">Gross Reserve Profile (tV)</h4>
             <div ref="reserveChartRef" class="w-full h-64"></div>
           </div>
         </div>

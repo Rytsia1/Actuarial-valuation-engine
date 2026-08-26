@@ -211,7 +211,7 @@ onUnmounted(() => {
         </p>
       </div>
       <span class="px-2 py-0.5 text-[10px] font-mono rounded bg-sky-500/10 text-sky-400 border border-sky-500/20">
-        $dr_t = \kappa(\theta - r_t)dt + \sigma dW_t$
+        dr(t) = κ(θ - r(t))dt + σ dW(t)
       </span>
     </div>
 
