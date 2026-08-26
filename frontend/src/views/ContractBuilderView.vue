@@ -1,5 +1,5 @@
 <script setup>
-import { ref, markRaw, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, shallowRef, markRaw, onMounted, onUnmounted, nextTick } from 'vue'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
@@ -53,7 +53,7 @@ const selectedPresetId = ref('term_life_20y')
 const nodes = ref([])
 const edges = ref([])
 const isSimulating = ref(false)
-const simulationResult = ref(null)
+const simulationResult = shallowRef(null)
 const simulationError = ref(null)
 const showResultsDrawer = ref(false)
 
@@ -275,7 +275,7 @@ function renderResultCharts() {
 
   // 1. Cash Flow Waterfall Chart
   if (cashFlowChartRef.value) {
-    if (!cashFlowChart) cashFlowChart = echarts.init(cashFlowChartRef.value)
+    if (!cashFlowChart) cashFlowChart = markRaw(echarts.init(cashFlowChartRef.value))
     cashFlowChart.setOption({
       backgroundColor: 'transparent',
       tooltip: { ...chartTooltip, trigger: 'axis' },
@@ -300,7 +300,7 @@ function renderResultCharts() {
 
   // 2. Gross Reserve Profile
   if (reserveChartRef.value) {
-    if (!reserveChart) reserveChart = echarts.init(reserveChartRef.value)
+    if (!reserveChart) reserveChart = markRaw(echarts.init(reserveChartRef.value))
     const reserveDurations = data.reserves.map((_, i) => `t=${i}`)
     reserveChart.setOption({
       backgroundColor: 'transparent',

@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, watch, onMounted, onUnmounted, nextTick, markRaw } from 'vue'
+import { ref, shallowRef, reactive, watch, onMounted, onUnmounted, nextTick, markRaw } from 'vue'
 import * as echarts from 'echarts'
 import {
   Scale,
@@ -40,7 +40,7 @@ const shocks = reactive({
 
 const loading = ref(false)
 const error = ref(null)
-const stressData = ref(null)
+const stressData = shallowRef(null)
 
 const tornadoChartRef = ref(null)
 const trajectoryChartRef = ref(null)
@@ -215,7 +215,7 @@ const chartAxisLine = { lineStyle: { color: '#1E293B' } }
 
 function renderTornadoChart() {
   if (!tornadoChartRef.value || !stressData.value?.tornado_data) return
-  if (!tornadoChart) tornadoChart = echarts.init(tornadoChartRef.value)
+  if (!tornadoChart) tornadoChart = markRaw(echarts.init(tornadoChartRef.value))
 
   const items = [...stressData.value.tornado_data].reverse()
   const factors = items.map(d => d.risk_factor)
@@ -295,7 +295,7 @@ function renderTornadoChart() {
 
 function renderTrajectoryChart() {
   if (!trajectoryChartRef.value || !stressData.value?.reserve_trajectory) return
-  if (!trajectoryChart) trajectoryChart = echarts.init(trajectoryChartRef.value)
+  if (!trajectoryChart) trajectoryChart = markRaw(echarts.init(trajectoryChartRef.value))
 
   const traj = stressData.value.reserve_trajectory
   const durations = traj.map(d => `t=${d.duration}`)
@@ -658,7 +658,7 @@ onUnmounted(() => {
     <!-- ═══════════════════════════════════════════════════════ -->
     <!-- 3. DUAL CHARTS: TORNADO SENSITIVITY + TRAJECTORY       -->
     <!-- ═══════════════════════════════════════════════════════ -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+    <div v-if="stressData && stressData.tornado_data && stressData.reserve_trajectory" class="grid grid-cols-1 lg:grid-cols-2 gap-5">
       <!-- Chart 1: Dynamic Tornado Sensitivity -->
       <div class="card p-5 space-y-3">
         <div class="flex items-center justify-between pb-2 border-b border-white/[0.06]">
@@ -691,7 +691,7 @@ onUnmounted(() => {
     <!-- ═══════════════════════════════════════════════════════ -->
     <!-- 4. DETAILED TRAJECTORY TABLE                           -->
     <!-- ═══════════════════════════════════════════════════════ -->
-    <div v-if="stressData" class="card p-5 space-y-3">
+    <div v-if="stressData && stressData.reserve_trajectory" class="card p-5 space-y-3">
       <div class="flex items-center justify-between mb-2">
         <div>
           <h3 class="text-sm font-semibold text-white">Duration-by-Duration Liability Comparison</h3>

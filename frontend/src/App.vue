@@ -1,5 +1,5 @@
 <script setup>
-import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, shallowRef, reactive, onMounted, onUnmounted, nextTick, markRaw } from 'vue'
 import * as echarts from 'echarts'
 import {
   checkHealth,
@@ -52,16 +52,16 @@ let activeSocketConnection = null
 // Portfolio Batch State
 const portfolioLoading = ref(false)
 const portfolioError = ref(null)
-const portfolioData = ref(null)
+const portfolioData = shallowRef(null)
 const portfolioInterestRate = ref(0.05)
 const isDragging = ref(false)
 
 // IFRS 17 State
-const ifrs17Data = ref(null)
+const ifrs17Data = shallowRef(null)
 const ifrs17Loading = ref(false)
 
 // Sensitivity & Stress State
-const sensitivityData = ref(null)
+const sensitivityData = shallowRef(null)
 const sensitivityLoading = ref(false)
 
 // Form Parameters with standard actuarial defaults
@@ -104,9 +104,9 @@ const form = reactive({
   seed: 42,
 })
 
-// Valuation Results from FastAPI
-const deterministicData = ref(null)
-const stochasticData = ref(null)
+// Valuation Results from FastAPI (shallowRef prevents recursive reactivity overload)
+const deterministicData = shallowRef(null)
+const stochasticData = shallowRef(null)
 
 // Chart DOM refs & instances
 const heroChartRef = ref(null)
@@ -530,7 +530,7 @@ const ACCENT = {
 
 function renderHeroChart() {
   if (!heroChartRef.value || !deterministicData.value?.cash_flows) return
-  if (!heroChart) heroChart = echarts.init(heroChartRef.value)
+  if (!heroChart) heroChart = markRaw(echarts.init(heroChartRef.value))
 
   const cfs = deterministicData.value.cash_flows
   const years = cfs.map(d => `Yr ${d.year + 1}`)
@@ -569,7 +569,7 @@ function renderHeroChart() {
 
 function renderReserveChart() {
   if (!reserveChartRef.value || !deterministicData.value?.reserve_profile) return
-  if (!reserveChart) reserveChart = echarts.init(reserveChartRef.value)
+  if (!reserveChart) reserveChart = markRaw(echarts.init(reserveChartRef.value))
 
   const profile = deterministicData.value.reserve_profile
   const durations = profile.map(r => `t=${r.duration}`)
@@ -601,7 +601,7 @@ function renderReserveChart() {
 
 function renderFanChart() {
   if (!fanChartRef.value || (!stochasticData.value?.quantiles && !stochasticData.value?.fan_chart_rates)) return
-  if (!fanChart) fanChart = echarts.init(fanChartRef.value)
+  if (!fanChart) fanChart = markRaw(echarts.init(fanChartRef.value))
 
   let years = [], p5 = [], p25 = [], p50 = [], p75 = [], p95 = []
 
@@ -650,7 +650,7 @@ function renderFanChart() {
 
 function renderCashFlowChart() {
   if (!cashFlowChartRef.value || !deterministicData.value?.cash_flows) return
-  if (!cashFlowChart) cashFlowChart = echarts.init(cashFlowChartRef.value)
+  if (!cashFlowChart) cashFlowChart = markRaw(echarts.init(cashFlowChartRef.value))
 
   const cfs = deterministicData.value.cash_flows
   const years = cfs.map(d => `Yr ${d.year + 1}`)
@@ -676,7 +676,7 @@ function renderCashFlowChart() {
 
 function renderDistChart() {
   if (!distChartRef.value || (!stochasticData.value?.terminal_distribution && !stochasticData.value?.liability_histogram)) return
-  if (!distChart) distChart = echarts.init(distChartRef.value)
+  if (!distChart) distChart = markRaw(echarts.init(distChartRef.value))
 
   let bins = [], counts = []
   const var95 = stochasticData.value.var_95 || stochasticData.value.terminal_distribution?.var_95 || 0
@@ -710,7 +710,7 @@ function renderPortfolioCharts() {
   if (!portfolioData.value) return
 
   if (portfolioCfChartRef.value && portfolioData.value.annual_cash_flows) {
-    if (!portfolioCfChart) portfolioCfChart = echarts.init(portfolioCfChartRef.value)
+    if (!portfolioCfChart) portfolioCfChart = markRaw(echarts.init(portfolioCfChartRef.value))
     const cfs = portfolioData.value.annual_cash_flows
     const years = cfs.map(d => `Yr ${d.year}`)
     const premiums = cfs.map(d => d.premium_income)
@@ -735,7 +735,7 @@ function renderPortfolioCharts() {
   }
 
   if (portfolioProdChartRef.value && portfolioData.value.product_breakdown) {
-    if (!portfolioProdChart) portfolioProdChart = echarts.init(portfolioProdChartRef.value)
+    if (!portfolioProdChart) portfolioProdChart = markRaw(echarts.init(portfolioProdChartRef.value))
     const prodEntries = Object.entries(portfolioData.value.product_breakdown).map(([k, v]) => ({
       name: k.replace('_', ' ').toUpperCase(), value: v.sum_assured,
     }))
@@ -752,7 +752,7 @@ function renderPortfolioCharts() {
   }
 
   if (portfolioAgeChartRef.value && portfolioData.value.age_breakdown) {
-    if (!portfolioAgeChart) portfolioAgeChart = echarts.init(portfolioAgeChartRef.value)
+    if (!portfolioAgeChart) portfolioAgeChart = markRaw(echarts.init(portfolioAgeChartRef.value))
     const ageEntries = Object.entries(portfolioData.value.age_breakdown)
     const categories = ageEntries.map(([k]) => k)
     const counts = ageEntries.map(([, v]) => v.count)
@@ -779,7 +779,7 @@ function renderIFRS17Charts() {
   if (!ifrs17Data.value) return
 
   if (ifrs17LrcChartRef.value && ifrs17Data.value.balance_sheet_schedule) {
-    if (!ifrs17LrcChart) ifrs17LrcChart = echarts.init(ifrs17LrcChartRef.value)
+    if (!ifrs17LrcChart) ifrs17LrcChart = markRaw(echarts.init(ifrs17LrcChartRef.value))
     const schedule = ifrs17Data.value.balance_sheet_schedule
     const durations = schedule.map(d => `t=${d.duration}`)
     const bels = schedule.map(d => d.bel)
@@ -804,7 +804,7 @@ function renderIFRS17Charts() {
   }
 
   if (ifrs17PnlChartRef.value && ifrs17Data.value.income_statement_schedule) {
-    if (!ifrs17PnlChart) ifrs17PnlChart = echarts.init(ifrs17PnlChartRef.value)
+    if (!ifrs17PnlChart) ifrs17PnlChart = markRaw(echarts.init(ifrs17PnlChartRef.value))
     const pnl = ifrs17Data.value.income_statement_schedule
     const years = pnl.map(d => `Yr ${d.year + 1}`)
 
@@ -828,7 +828,7 @@ function renderIFRS17Charts() {
 
 function renderTornadoChart() {
   if (!tornadoChartRef.value || !sensitivityData.value?.tornado_items) return
-  if (!tornadoChart) tornadoChart = echarts.init(tornadoChartRef.value)
+  if (!tornadoChart) tornadoChart = markRaw(echarts.init(tornadoChartRef.value))
 
   const items = [...sensitivityData.value.tornado_items].reverse()
   const factors = items.map(d => d.risk_factor)

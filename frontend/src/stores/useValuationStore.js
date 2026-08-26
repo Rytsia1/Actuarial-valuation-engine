@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia'
+import { markRaw } from 'vue'
 import {
   runDeterministicValuation,
   runStressTest,
@@ -200,7 +201,7 @@ export const useValuationStore = defineStore('valuation', {
         }
 
         const res = await runStressTest(payload)
-        this.valuationResults.stressTest = res
+        this.valuationResults.stressTest = markRaw(res)
         return res
       } catch (err) {
         console.error('Stress test valuation failed:', err)
@@ -233,7 +234,7 @@ export const useValuationStore = defineStore('valuation', {
         }
 
         const res = await runDeterministicValuation(payload)
-        this.valuationResults.deterministic = res
+        this.valuationResults.deterministic = markRaw(res)
         return res
       } catch (err) {
         console.error('Deterministic valuation failed:', err)

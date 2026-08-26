@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted, watch, defineProps } from 'vue'
+import { ref, markRaw, onMounted, onUnmounted, watch, defineProps } from 'vue'
 import * as echarts from 'echarts'
 
 const props = defineProps({
@@ -23,7 +23,7 @@ let resizeObserver = null
 
 function initChart() {
   if (!chartRef.value) return
-  chartInstance = echarts.init(chartRef.value)
+  chartInstance = markRaw(echarts.init(chartRef.value))
   updateChartOptions()
 }
 
