@@ -17,8 +17,10 @@ import logging
 from collections.abc import Callable, Coroutine
 from typing import Any, Optional
 
+import io
 import numpy as np
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+import pandas as pd
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from actuary_engine.api.job_manager import JobStatus, job_manager
@@ -27,6 +29,8 @@ from actuary_engine.api.schemas import (
     AsyncJobStatusResponse,
     DeterministicValuationRequest,
     DeterministicValuationResponse,
+    PortfolioValuationJSONRequest,
+    PortfolioValuationResponse,
     StochasticValuationRequest,
     StochasticValuationResponse,
 )
@@ -39,6 +43,7 @@ from actuary_engine.stochastic.monte_carlo import StochasticValuationEngine
 from actuary_engine.tables.commutation import CommutationFunctions
 from actuary_engine.tables.mortality_table import MortalityTable
 from actuary_engine.valuation.gpv import GrossPremiumValuation
+from actuary_engine.valuation.portfolio import PortfolioSummary, PortfolioValuationEngine
 from actuary_engine.valuation.reserves import ReserveCalculator
 
 logger = logging.getLogger("actuary_engine.api")
@@ -444,3 +449,120 @@ async def websocket_simulation_progress(websocket: WebSocket, job_id: str) -> No
             await websocket.close()
         except Exception:
             pass
+
+
+# ────────────────────────────────────────────────────────────
+# Portfolio Batch Valuation Endpoints
+# ────────────────────────────────────────────────────────────
+
+@app.post("/api/v1/valuation/portfolio/csv", response_model=PortfolioValuationResponse)
+async def evaluate_portfolio_csv(
+    file: UploadFile = File(..., description="CSV file containing seriatim policyholder records."),
+    interest_rate: float = Form(0.05, description="Annual effective discount rate."),
+    expense_percent_first: float = Form(0.35, description="First-year acquisition expense % of premium."),
+    expense_percent_renewal: float = Form(0.05, description="Renewal maintenance expense % of premium."),
+    expense_per_policy_first: float = Form(200.0, description="First-year per-policy expense ($)."),
+    expense_per_policy_renewal: float = Form(20.0, description="Renewal per-policy expense ($)."),
+    flat_lapse_rate: float = Form(0.03, description="Flat annual policyholder lapse rate."),
+) -> PortfolioValuationResponse:
+    """Evaluate an entire portfolio of life insurance policies via multipart CSV file upload."""
+    try:
+        contents = await file.read()
+        engine = PortfolioValuationEngine(
+            table=table,
+            interest=InterestAssumption(annual_rate=interest_rate),
+            expense=ExpenseAssumption(
+                percent_of_premium_first=expense_percent_first,
+                percent_of_premium_renewal=expense_percent_renewal,
+                per_policy_first=expense_per_policy_first,
+                per_policy_renewal=expense_per_policy_renewal,
+            ),
+            lapse=LapseAssumption(flat_annual_rate=flat_lapse_rate),
+        )
+
+        df = engine.load_portfolio_df(contents)
+        res_df, summary = engine.evaluate_portfolio(df)
+
+        sample_records = res_df.head(25)[
+            ["policy_id", "product_type", "issue_age", "policy_duration_years", "term_years", "sum_assured", "gross_premium", "pvfb", "pvfp", "pvfe", "bel"]
+        ].to_dict(orient="records")
+
+        return PortfolioValuationResponse(
+            total_policies=summary.total_policies,
+            total_sum_assured=summary.total_sum_assured,
+            total_pvfb=summary.total_pvfb,
+            total_pvfp=summary.total_pvfp,
+            total_pvfe=summary.total_pvfe,
+            total_bel=summary.total_bel,
+            annual_cash_flows=summary.annual_cash_flows,
+            product_breakdown=summary.product_breakdown,
+            age_breakdown=summary.age_breakdown,
+            duration_breakdown=summary.duration_breakdown,
+            sample_seriatim=sample_records,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Portfolio CSV valuation failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Portfolio processing error: {e}") from e
+
+
+@app.post("/api/v1/valuation/portfolio", response_model=PortfolioValuationResponse)
+def evaluate_portfolio_json(request: PortfolioValuationJSONRequest) -> PortfolioValuationResponse:
+    """Evaluate a portfolio of life insurance policies provided as JSON records."""
+    try:
+        engine = PortfolioValuationEngine(
+            table=table,
+            interest=InterestAssumption(annual_rate=request.interest_rate),
+            expense=request.expense or ExpenseAssumption(
+                percent_of_premium_first=0.35,
+                percent_of_premium_renewal=0.05,
+                per_policy_first=200.0,
+                per_policy_renewal=20.0,
+            ),
+            lapse=request.lapse or LapseAssumption(flat_annual_rate=0.03),
+        )
+
+        raw_records = [p.model_dump() for p in request.policies]
+        raw_df = pd.DataFrame(raw_records)
+        df = engine.load_portfolio_df(raw_df)
+        res_df, summary = engine.evaluate_portfolio(df)
+
+        sample_records = res_df.head(25)[
+            ["policy_id", "product_type", "issue_age", "policy_duration_years", "term_years", "sum_assured", "gross_premium", "pvfb", "pvfp", "pvfe", "bel"]
+        ].to_dict(orient="records")
+
+        return PortfolioValuationResponse(
+            total_policies=summary.total_policies,
+            total_sum_assured=summary.total_sum_assured,
+            total_pvfb=summary.total_pvfb,
+            total_pvfp=summary.total_pvfp,
+            total_pvfe=summary.total_pvfe,
+            total_bel=summary.total_bel,
+            annual_cash_flows=summary.annual_cash_flows,
+            product_breakdown=summary.product_breakdown,
+            age_breakdown=summary.age_breakdown,
+            duration_breakdown=summary.duration_breakdown,
+            sample_seriatim=sample_records,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Portfolio JSON valuation failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Portfolio processing error: {e}") from e
+
+
+@app.get("/api/v1/valuation/portfolio/sample_csv")
+def download_sample_portfolio_csv(n_policies: int = 1000) -> Response:
+    """Generate and return a downloadable synthetic CSV portfolio for testing."""
+    df = PortfolioValuationEngine.generate_synthetic_portfolio(n_policies=min(n_policies, 50000), seed=42)
+    csv_buffer = io.StringIO()
+    df.to_csv(csv_buffer, index=False)
+    csv_bytes = csv_buffer.getvalue().encode("utf-8")
+
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=sample_portfolio_{n_policies}.csv"},
+    )
+

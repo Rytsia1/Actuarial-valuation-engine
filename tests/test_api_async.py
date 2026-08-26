@@ -90,12 +90,12 @@ class TestAsyncValuationAPI:
     def test_invalid_contract_params_returns_400(self) -> None:
         payload = {
             "product_type": "endowment",
-            "issue_age": 120,  # invalid age > omega
+            "issue_age": 120,  # invalid age > 105
             "term": 20,
             "sum_assured": 100_000,
         }
         response = client.post("/api/v1/valuation/stochastic/async", json=payload)
-        assert response.status_code == 400
+        assert response.status_code in (400, 422)
 
 
 class TestWebSocketSimulationProgress:

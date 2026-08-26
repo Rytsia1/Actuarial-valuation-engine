@@ -1,51 +1,42 @@
 """
-API Data Transfer Objects (DTOs) and Pydantic schemas for valuation endpoints.
+Pydantic Request and Response schemas for the Actuarial Valuation API.
 """
 
 from __future__ import annotations
 
 from typing import Any, Optional
-
 from pydantic import BaseModel, Field
 
-from actuary_engine.models.assumptions import (
-    ExpenseAssumption,
-    LapseAssumption,
-)
+from actuary_engine.models.assumptions import ExpenseAssumption, LapseAssumption
 from actuary_engine.models.contracts import ProductType
 from actuary_engine.stochastic.dynamic_lapse import DynamicLapseParams
 from actuary_engine.stochastic.esg import VasicekParams
 
 
 class DeterministicValuationRequest(BaseModel):
-    """Request schema for deterministic pricing, reserves, and GPV rollout."""
+    """Request payload for Level 1-3 deterministic life insurance valuation."""
 
     product_type: ProductType = Field(
-        default=ProductType.TERM,
-        description="Insurance product type (term, whole_life, endowment, pure_endowment).",
+        default=ProductType.ENDOWMENT, description="Insurance product type."
     )
-    issue_age: int = Field(default=30, ge=0, le=120, description="Age at policy issue.")
-    term: Optional[int] = Field(default=20, gt=0, description="Policy coverage term (years).")
-    sum_assured: float = Field(default=1_000_000.0, gt=0.0, description="Face amount / death benefit.")
-    premium_paying_term: Optional[int] = Field(
-        default=None, gt=0, description="Premium paying period (years)."
-    )
-    interest_rate: float = Field(
-        default=0.05, gt=0.0, lt=1.0, description="Annual effective interest rate (e.g. 0.05 for 5%)."
-    )
+    issue_age: int = Field(default=30, ge=0, le=105, description="Policyholder issue age.")
+    term: Optional[int] = Field(default=20, gt=0, description="Coverage term in years.")
+    sum_assured: float = Field(default=1_000_000.0, gt=0.0, description="Sum assured / Face amount.")
+    premium_paying_term: Optional[int] = Field(default=None, gt=0, description="Premium paying term.")
+    interest_rate: float = Field(default=0.05, gt=0.0, le=0.50, description="Annual effective interest rate.")
     gross_premium: Optional[float] = Field(
-        default=None, gt=0.0, description="Annual gross premium (defaults to net premium with 20% loading)."
+        default=None, gt=0.0, description="Gross premium. If None, calculated with 20% loading."
     )
     expense: Optional[ExpenseAssumption] = Field(
-        default=None, description="Acquisition and maintenance expense loadings."
+        default=None, description="Expense loadings."
     )
     lapse: Optional[LapseAssumption] = Field(
-        default=None, description="Static lapse / surrender assumption."
+        default=None, description="Policyholder lapse decrement rates."
     )
 
 
 class DeterministicValuationResponse(BaseModel):
-    """Response schema for deterministic valuation."""
+    """Response schema for deterministic valuation results."""
 
     product_type: str
     issue_age: int
@@ -61,12 +52,12 @@ class DeterministicValuationResponse(BaseModel):
 
 
 class StochasticValuationRequest(BaseModel):
-    """Request schema for Monte Carlo stochastic liability and tail-risk simulation."""
+    """Request payload for Level 4 stochastic Monte Carlo risk simulation."""
 
     product_type: ProductType = Field(
-        default=ProductType.TERM, description="Product type."
+        default=ProductType.ENDOWMENT, description="Insurance product type."
     )
-    issue_age: int = Field(default=30, ge=0, le=120, description="Issue age.")
+    issue_age: int = Field(default=30, ge=0, le=105, description="Policyholder issue age.")
     term: Optional[int] = Field(default=20, gt=0, description="Coverage term in years.")
     sum_assured: float = Field(default=1_000_000.0, gt=0.0, description="Sum assured / Face amount.")
     premium_paying_term: Optional[int] = Field(default=None, gt=0, description="Premium paying term.")
@@ -127,3 +118,44 @@ class AsyncJobStatusResponse(BaseModel):
     result: Optional[StochasticValuationResponse] = None
     error: Optional[str] = None
 
+
+# ────────────────────────────────────────────────────────────
+# Portfolio Batch Valuation Schemas
+# ────────────────────────────────────────────────────────────
+
+class PortfolioPolicyRecord(BaseModel):
+    """Individual policy input item for JSON portfolio batch requests."""
+
+    policy_id: Optional[str] = Field(default=None, description="Unique policy identifier.")
+    issue_age: int = Field(..., ge=0, le=105, description="Issue age.")
+    term_years: Optional[int] = Field(default=20, ge=1, description="Policy term in years.")
+    sum_assured: float = Field(..., gt=0.0, description="Sum assured / Face amount.")
+    gross_premium: float = Field(..., gt=0.0, description="Annual gross premium.")
+    product_type: str = Field(default="term", description="Product type (term, endowment, whole_life, pure_endowment).")
+    policy_duration_years: int = Field(default=0, ge=0, description="Current policy in-force duration.")
+    gender: Optional[str] = Field(default="U", description="Gender (M, F, U).")
+
+
+class PortfolioValuationJSONRequest(BaseModel):
+    """JSON batch request schema for evaluating a portfolio of contracts."""
+
+    policies: list[PortfolioPolicyRecord] = Field(..., description="List of policy contracts.")
+    interest_rate: float = Field(default=0.05, gt=0.0, le=0.50, description="Discount rate.")
+    expense: Optional[ExpenseAssumption] = Field(default=None, description="Expense assumptions.")
+    lapse: Optional[LapseAssumption] = Field(default=None, description="Lapse assumptions.")
+
+
+class PortfolioValuationResponse(BaseModel):
+    """Response schema for aggregate portfolio liabilities and segment breakdowns."""
+
+    total_policies: int
+    total_sum_assured: float
+    total_pvfb: float
+    total_pvfp: float
+    total_pvfe: float
+    total_bel: float
+    annual_cash_flows: list[dict[str, Any]]
+    product_breakdown: dict[str, dict[str, Any]]
+    age_breakdown: dict[str, dict[str, Any]]
+    duration_breakdown: dict[str, dict[str, Any]]
+    sample_seriatim: list[dict[str, Any]]

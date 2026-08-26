@@ -24,13 +24,20 @@ export class ActuaryApiError extends Error {
  */
 async function apiRequest(endpoint, options = {}) {
   const url = `${API_BASE}${endpoint}`;
+  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+
+  const defaultHeaders = {
+    'Accept': 'application/json',
+  };
+  if (!isFormData) {
+    defaultHeaders['Content-Type'] = 'application/json';
+  }
   
   try {
     const res = await fetch(url, {
       ...options,
       headers: {
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
+        ...defaultHeaders,
         ...(options.headers || {}),
       },
     });
@@ -139,3 +146,38 @@ export async function getStochasticJobStatus(jobId) {
   return await apiRequest(`/valuation/stochastic/status/${jobId}`);
 }
 
+/**
+ * Upload portfolio CSV file for seriatim batch valuation
+ * POST /api/v1/valuation/portfolio/csv
+ *
+ * @param {FormData} formData - Multipart form data with 'file' and optional params
+ * @returns {Promise<Object>} PortfolioValuationResponse
+ */
+export async function uploadPortfolioCSV(formData) {
+  return await apiRequest('/valuation/portfolio/csv', {
+    method: 'POST',
+    body: formData,
+  });
+}
+
+/**
+ * Run portfolio batch valuation from JSON records
+ * POST /api/v1/valuation/portfolio
+ *
+ * @param {Object} payload - { policies: Array, interest_rate: Number, expense: Object, lapse: Object }
+ * @returns {Promise<Object>} PortfolioValuationResponse
+ */
+export async function evaluatePortfolioJSON(payload) {
+  return await apiRequest('/valuation/portfolio', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * Download sample synthetic CSV URL
+ * GET /api/v1/valuation/portfolio/sample_csv
+ */
+export function getSamplePortfolioCSVUrl(nPolicies = 1000) {
+  return `${API_BASE}/valuation/portfolio/sample_csv?n_policies=${nPolicies}`;
+}

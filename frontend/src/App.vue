@@ -7,6 +7,8 @@ import {
   startAsyncStochasticValuation,
   getStochasticJobStatus,
   runStochasticValuation,
+  uploadPortfolioCSV,
+  getSamplePortfolioCSVUrl,
   ActuaryApiError,
 } from './services/actuaryApi'
 import { connectSimulationSocket } from './services/simulationSocket'
@@ -15,7 +17,7 @@ import { connectSimulationSocket } from './services/simulationSocket'
 // Reactive Dashboard State
 // ────────────────────────────────────────────────────────────
 
-const activeTab = ref('overview') // 'overview', 'reserves', 'stochastic', 'cashflows', 'table'
+const activeTab = ref('overview') // 'overview', 'reserves', 'stochastic', 'cashflows', 'table', 'portfolio'
 const backendStatus = ref('checking') // 'healthy', 'error', 'checking'
 const loading = ref(false)
 const errorMessage = ref(null)
@@ -28,6 +30,13 @@ const completedPaths = ref(0)
 const totalPaths = ref(0)
 const partialMetrics = ref(null)
 let activeSocketConnection = null
+
+// Portfolio Batch State
+const portfolioLoading = ref(false)
+const portfolioError = ref(null)
+const portfolioData = ref(null)
+const portfolioInterestRate = ref(0.05)
+const isDragging = ref(false)
 
 // Form Parameters with standard actuarial defaults
 const form = reactive({
@@ -77,12 +86,18 @@ const reserveChartRef = ref(null)
 const fanChartRef = ref(null)
 const cashFlowChartRef = ref(null)
 const distChartRef = ref(null)
+const portfolioCfChartRef = ref(null)
+const portfolioProdChartRef = ref(null)
+const portfolioAgeChartRef = ref(null)
 
 let heroChart = null
 let reserveChart = null
 let fanChart = null
 let cashFlowChart = null
 let distChart = null
+let portfolioCfChart = null
+let portfolioProdChart = null
+let portfolioAgeChart = null
 let resizeObserver = null
 
 // ────────────────────────────────────────────────────────────
@@ -180,7 +195,6 @@ async function executeValuation() {
   partialMetrics.value = null
 
   try {
-    // 1. Prepare deterministic payload
     const detPayload = {
       product_type: form.product_type,
       issue_age: form.issue_age,
@@ -193,7 +207,6 @@ async function executeValuation() {
       lapse: form.lapse,
     }
 
-    // 2. Prepare stochastic payload
     const stochPayload = {
       product_type: form.product_type,
       issue_age: form.issue_age,
@@ -208,16 +221,13 @@ async function executeValuation() {
       seed: form.seed,
     }
 
-    // Launch deterministic computation
     const detPromise = runDeterministicValuation(detPayload)
 
-    // Launch asynchronous stochastic computation with WebSocket streaming
     const asyncJobPromise = new Promise(async (resolve, reject) => {
       try {
         const jobRes = await startAsyncStochasticValuation(stochPayload)
         const jobId = jobRes.job_id
 
-        // Establish real-time WebSocket connection
         activeSocketConnection = connectSimulationSocket(jobId, {
           onProgress: (prog) => {
             simProgress.value = prog.percent
@@ -235,7 +245,6 @@ async function executeValuation() {
           },
           onError: async (err) => {
             console.warn('WebSocket error, falling back to HTTP polling:', err)
-            // Polling fallback loop
             try {
               let attempts = 0
               while (attempts < 60) {
@@ -259,7 +268,6 @@ async function executeValuation() {
           },
         })
       } catch (err) {
-        // Fallback to synchronous endpoint if async dispatch fails
         try {
           const syncRes = await runStochasticValuation(stochPayload)
           simProgress.value = 100
@@ -295,6 +303,63 @@ async function executeValuation() {
 }
 
 // ────────────────────────────────────────────────────────────
+// Portfolio Batch Upload & Processing
+// ────────────────────────────────────────────────────────────
+
+async function handlePortfolioFileUpload(event) {
+  const file = event.target.files?.[0]
+  if (!file) return
+  await processPortfolioFile(file)
+}
+
+function handlePortfolioDrop(event) {
+  isDragging.value = false
+  const file = event.dataTransfer?.files?.[0]
+  if (!file) return
+  processPortfolioFile(file)
+}
+
+async function processPortfolioFile(file) {
+  portfolioLoading.value = true
+  portfolioError.value = null
+
+  try {
+    const formData = new FormData()
+    formData.append('file', file)
+    formData.append('interest_rate', portfolioInterestRate.value)
+
+    const res = await uploadPortfolioCSV(formData)
+    portfolioData.value = res
+    activeTab.value = 'portfolio'
+
+    await nextTick()
+    renderPortfolioCharts()
+  } catch (err) {
+    console.error('Portfolio valuation error:', err)
+    portfolioError.value = err.message || 'Portfolio CSV valuation failed.'
+  } finally {
+    portfolioLoading.value = false
+  }
+}
+
+async function runSamplePortfolioDemo(nPolicies = 1000) {
+  portfolioLoading.value = true
+  portfolioError.value = null
+
+  try {
+    const url = getSamplePortfolioCSVUrl(nPolicies)
+    const fetchRes = await fetch(url)
+    const blob = await fetchRes.blob()
+    const file = new File([blob], `sample_portfolio_${nPolicies}.csv`, { type: 'text/csv' })
+    await processPortfolioFile(file)
+  } catch (err) {
+    console.error('Demo portfolio error:', err)
+    portfolioError.value = err.message || 'Failed to run demo portfolio.'
+    portfolioLoading.value = false
+  }
+}
+
+// ────────────────────────────────────────────────────────────
 // ECharts Render Functions (Dark Neon Theme)
 // ────────────────────────────────────────────────────────────
 
@@ -320,53 +385,19 @@ function renderHeroChart() {
       borderColor: 'rgba(236, 72, 153, 0.3)',
       borderWidth: 1,
       textStyle: { color: '#f8fafc', fontSize: 12, fontFamily: 'JetBrains Mono' },
-      formatter: params => {
-        const item = params[0]
-        const dataPoint = cfs[item.dataIndex]
-        return `
-          <div class="font-bold text-fuchsia-400 pb-1 mb-1 border-b border-slate-700">${item.axisValue} (Age ${dataPoint.age})</div>
-          <div class="flex justify-between space-x-4 py-0.5 text-xs">
-            <span class="text-slate-400">Premium Inflow:</span>
-            <span class="text-emerald-400 font-mono font-semibold">${formatCurrency(dataPoint.premium_income)}</span>
-          </div>
-          <div class="flex justify-between space-x-4 py-0.5 text-xs">
-            <span class="text-slate-400">Claims & Exp Outgo:</span>
-            <span class="text-rose-400 font-mono font-semibold">${formatCurrency(dataPoint.death_claims + dataPoint.total_expense + dataPoint.maturity_benefit)}</span>
-          </div>
-          <div class="flex justify-between space-x-4 py-0.5 text-xs border-t border-slate-800 mt-1 pt-1 font-bold">
-            <span class="text-sky-300">Net Annual CF:</span>
-            <span class="${dataPoint.net_liability_cf > 0 ? 'text-rose-400' : 'text-emerald-400'} font-mono">${formatCurrency(dataPoint.net_liability_cf)}</span>
-          </div>
-        `
-      },
     },
-    grid: {
-      top: 30,
-      left: 65,
-      right: 25,
-      bottom: 35,
-    },
+    grid: { top: 30, left: 65, right: 25, bottom: 35 },
     xAxis: {
       type: 'category',
       data: years,
       axisLine: { lineStyle: { color: '#334155' } },
-      axisLabel: {
-        color: '#94a3b8',
-        fontSize: 10,
-        fontFamily: 'JetBrains Mono',
-        interval: Math.max(1, Math.floor(years.length / 10)),
-      },
+      axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', interval: Math.max(1, Math.floor(years.length / 10)) },
       splitLine: { show: false },
     },
     yAxis: {
       type: 'value',
       axisLine: { show: false },
-      axisLabel: {
-        color: '#94a3b8',
-        fontSize: 10,
-        fontFamily: 'JetBrains Mono',
-        formatter: v => `$${(v / 1000).toFixed(0)}k`,
-      },
+      axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', formatter: v => `$${(v / 1000).toFixed(0)}k` },
       splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } },
     },
     series: [
@@ -392,12 +423,7 @@ function renderHeroChart() {
         data: cumLiability,
         smooth: true,
         symbol: 'none',
-        lineStyle: {
-          width: 2.5,
-          color: '#38bdf8',
-          shadowColor: 'rgba(56, 189, 248, 0.5)',
-          shadowBlur: 10,
-        },
+        lineStyle: { width: 2.5, color: '#38bdf8', shadowColor: 'rgba(56, 189, 248, 0.5)', shadowBlur: 10 },
       },
     ],
   }
@@ -416,43 +442,11 @@ function renderReserveChart() {
 
   const option = {
     backgroundColor: 'transparent',
-    tooltip: {
-      trigger: 'axis',
-      backgroundColor: 'rgba(11, 15, 25, 0.95)',
-      borderColor: 'rgba(56, 189, 248, 0.3)',
-      borderWidth: 1,
-      textStyle: { color: '#f8fafc', fontSize: 12, fontFamily: 'JetBrains Mono' },
-    },
-    legend: {
-      data: ['Prospective Reserve (_t V)', 'Retrospective Reserve (_t V_retro)', 'Gross GPV Reserve'],
-      textStyle: { color: '#94a3b8', fontSize: 11 },
-      top: 0,
-      right: 10,
-    },
+    tooltip: { trigger: 'axis', backgroundColor: 'rgba(11, 15, 25, 0.95)', borderColor: 'rgba(56, 189, 248, 0.3)', textStyle: { color: '#f8fafc', fontSize: 12, fontFamily: 'JetBrains Mono' } },
+    legend: { data: ['Prospective Reserve (_t V)', 'Retrospective Reserve (_t V_retro)', 'Gross GPV Reserve'], textStyle: { color: '#94a3b8', fontSize: 11 }, top: 0, right: 10 },
     grid: { top: 40, left: 65, right: 25, bottom: 35 },
-    xAxis: {
-      type: 'category',
-      data: durations,
-      boundaryGap: false,
-      axisLine: { lineStyle: { color: '#334155' } },
-      axisLabel: {
-        color: '#94a3b8',
-        fontSize: 10,
-        fontFamily: 'JetBrains Mono',
-        interval: Math.max(1, Math.floor(durations.length / 8)),
-      },
-      splitLine: { show: true, lineStyle: { color: 'rgba(255, 255, 255, 0.04)' } },
-    },
-    yAxis: {
-      type: 'value',
-      axisLabel: {
-        color: '#94a3b8',
-        fontSize: 10,
-        fontFamily: 'JetBrains Mono',
-        formatter: v => `$${(v / 1000).toFixed(0)}k`,
-      },
-      splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } },
-    },
+    xAxis: { type: 'category', data: durations, boundaryGap: false, axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', interval: Math.max(1, Math.floor(durations.length / 8)) }, splitLine: { show: true, lineStyle: { color: 'rgba(255, 255, 255, 0.04)' } } },
+    yAxis: { type: 'value', axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } } },
     series: [
       {
         name: 'Prospective Reserve (_t V)',
@@ -463,31 +457,10 @@ function renderReserveChart() {
         symbolSize: 4,
         lineStyle: { width: 2.5, color: '#38bdf8', shadowColor: 'rgba(56, 189, 248, 0.5)', shadowBlur: 10 },
         itemStyle: { color: '#38bdf8' },
-        areaStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(56, 189, 248, 0.28)' },
-            { offset: 1, color: 'rgba(56, 189, 248, 0.0)' },
-          ]),
-        },
+        areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(56, 189, 248, 0.28)' }, { offset: 1, color: 'rgba(56, 189, 248, 0.0)' }]) },
       },
-      {
-        name: 'Retrospective Reserve (_t V_retro)',
-        type: 'line',
-        data: retrospective,
-        smooth: true,
-        symbol: 'none',
-        lineStyle: { width: 1.5, color: '#34d399', type: 'dashed' },
-        itemStyle: { color: '#34d399' },
-      },
-      {
-        name: 'Gross GPV Reserve',
-        type: 'line',
-        data: gross,
-        smooth: true,
-        symbol: 'none',
-        lineStyle: { width: 2, color: '#fb923c' },
-        itemStyle: { color: '#fb923c' },
-      },
+      { name: 'Retrospective Reserve (_t V_retro)', type: 'line', data: retrospective, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#34d399', type: 'dashed' }, itemStyle: { color: '#34d399' } },
+      { name: 'Gross GPV Reserve', type: 'line', data: gross, smooth: true, symbol: 'none', lineStyle: { width: 2, color: '#fb923c' }, itemStyle: { color: '#fb923c' } },
     ],
   }
   reserveChart.setOption(option, true)
@@ -518,85 +491,19 @@ function renderFanChart() {
 
   const option = {
     backgroundColor: 'transparent',
-    tooltip: {
-      trigger: 'axis',
-      backgroundColor: 'rgba(11, 15, 25, 0.95)',
-      borderColor: 'rgba(168, 85, 247, 0.3)',
-      borderWidth: 1,
-      textStyle: { color: '#f8fafc', fontSize: 12, fontFamily: 'JetBrains Mono' },
-    },
-    legend: {
-      data: ['95% Upper Bound', 'Median (p50)', 'Mean Rate', '5% Lower Bound'],
-      textStyle: { color: '#94a3b8', fontSize: 11 },
-      top: 0,
-      right: 10,
-    },
+    tooltip: { trigger: 'axis', backgroundColor: 'rgba(11, 15, 25, 0.95)', borderColor: 'rgba(168, 85, 247, 0.3)', textStyle: { color: '#f8fafc', fontSize: 12, fontFamily: 'JetBrains Mono' } },
+    legend: { data: ['95% Upper Bound', 'Median (p50)', 'Mean Rate', '5% Lower Bound'], textStyle: { color: '#94a3b8', fontSize: 11 }, top: 0, right: 10 },
     grid: { top: 40, left: 55, right: 25, bottom: 35 },
-    xAxis: {
-      type: 'category',
-      data: years,
-      boundaryGap: false,
-      axisLine: { lineStyle: { color: '#334155' } },
-      axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', interval: Math.max(1, Math.floor(years.length / 8)) },
-      splitLine: { show: true, lineStyle: { color: 'rgba(255, 255, 255, 0.04)' } },
-    },
-    yAxis: {
-      type: 'value',
-      axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', formatter: v => `${v}%` },
-      splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } },
-    },
+    xAxis: { type: 'category', data: years, boundaryGap: false, axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', interval: Math.max(1, Math.floor(years.length / 8)) }, splitLine: { show: true, lineStyle: { color: 'rgba(255, 255, 255, 0.04)' } } },
+    yAxis: { type: 'value', axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', formatter: v => `${v}%` }, splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } } },
     series: [
       ...sampleSeries,
-      {
-        name: '95% Upper Bound',
-        type: 'line',
-        data: p95,
-        smooth: true,
-        symbol: 'none',
-        lineStyle: { width: 1.5, color: '#f43f5e' },
-        areaStyle: { color: 'rgba(244, 63, 94, 0.12)' },
-      },
-      {
-        name: 'p75',
-        type: 'line',
-        data: p75,
-        smooth: true,
-        symbol: 'none',
-        lineStyle: { width: 1, color: 'rgba(236, 72, 153, 0.5)' },
-        areaStyle: { color: 'rgba(236, 72, 153, 0.16)' },
-      },
-      {
-        name: 'Median (p50)',
-        type: 'line',
-        data: p50,
-        smooth: true,
-        symbol: 'none',
-        lineStyle: { width: 2.5, color: '#38bdf8', shadowColor: 'rgba(56, 189, 248, 0.6)', shadowBlur: 8 },
-      },
-      {
-        name: 'Mean Rate',
-        type: 'line',
-        data: mean,
-        smooth: true,
-        symbol: 'none',
-        lineStyle: { width: 1.5, color: '#fbbf24', type: 'dashed' },
-      },
-      {
-        name: 'p25',
-        type: 'line',
-        data: p25,
-        smooth: true,
-        symbol: 'none',
-        lineStyle: { width: 1, color: 'rgba(236, 72, 153, 0.5)' },
-      },
-      {
-        name: '5% Lower Bound',
-        type: 'line',
-        data: p5,
-        smooth: true,
-        symbol: 'none',
-        lineStyle: { width: 1.5, color: '#a855f7' },
-      },
+      { name: '95% Upper Bound', type: 'line', data: p95, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#f43f5e' }, areaStyle: { color: 'rgba(244, 63, 94, 0.12)' } },
+      { name: 'p75', type: 'line', data: p75, smooth: true, symbol: 'none', lineStyle: { width: 1, color: 'rgba(236, 72, 153, 0.5)' }, areaStyle: { color: 'rgba(236, 72, 153, 0.16)' } },
+      { name: 'Median (p50)', type: 'line', data: p50, smooth: true, symbol: 'none', lineStyle: { width: 2.5, color: '#38bdf8', shadowColor: 'rgba(56, 189, 248, 0.6)', shadowBlur: 8 } },
+      { name: 'Mean Rate', type: 'line', data: mean, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#fbbf24', type: 'dashed' } },
+      { name: 'p25', type: 'line', data: p25, smooth: true, symbol: 'none', lineStyle: { width: 1, color: 'rgba(236, 72, 153, 0.5)' } },
+      { name: '5% Lower Bound', type: 'line', data: p5, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#a855f7' } },
     ],
   }
   fanChart.setOption(option, true)
@@ -614,49 +521,15 @@ function renderCashFlowChart() {
 
   const option = {
     backgroundColor: 'transparent',
-    tooltip: {
-      trigger: 'axis',
-      backgroundColor: 'rgba(11, 15, 25, 0.95)',
-      borderColor: '#334155',
-      textStyle: { color: '#f8fafc', fontSize: 12, fontFamily: 'JetBrains Mono' },
-    },
-    legend: {
-      data: ['Premium Income', 'Claims & Benefits', 'Expenses'],
-      textStyle: { color: '#94a3b8', fontSize: 11 },
-      top: 0,
-      right: 10,
-    },
+    tooltip: { trigger: 'axis', backgroundColor: 'rgba(11, 15, 25, 0.95)', borderColor: '#334155', textStyle: { color: '#f8fafc', fontSize: 12, fontFamily: 'JetBrains Mono' } },
+    legend: { data: ['Premium Income', 'Claims & Benefits', 'Expenses'], textStyle: { color: '#94a3b8', fontSize: 11 }, top: 0, right: 10 },
     grid: { top: 40, left: 65, right: 25, bottom: 35 },
-    xAxis: {
-      type: 'category',
-      data: years,
-      axisLine: { lineStyle: { color: '#334155' } },
-      axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', interval: Math.max(1, Math.floor(years.length / 8)) },
-    },
-    yAxis: {
-      type: 'value',
-      axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', formatter: v => `$${(v / 1000).toFixed(0)}k` },
-      splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } },
-    },
+    xAxis: { type: 'category', data: years, axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', interval: Math.max(1, Math.floor(years.length / 8)) } },
+    yAxis: { type: 'value', axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } } },
     series: [
-      {
-        name: 'Premium Income',
-        type: 'bar',
-        data: premiums,
-        itemStyle: { color: '#34d399', borderRadius: [3, 3, 0, 0] },
-      },
-      {
-        name: 'Claims & Benefits',
-        type: 'bar',
-        data: claims,
-        itemStyle: { color: '#f43f5e', borderRadius: [3, 3, 0, 0] },
-      },
-      {
-        name: 'Expenses',
-        type: 'bar',
-        data: expenses,
-        itemStyle: { color: '#fb923c', borderRadius: [3, 3, 0, 0] },
-      },
+      { name: 'Premium Income', type: 'bar', data: premiums, itemStyle: { color: '#34d399', borderRadius: [3, 3, 0, 0] } },
+      { name: 'Claims & Benefits', type: 'bar', data: claims, itemStyle: { color: '#f43f5e', borderRadius: [3, 3, 0, 0] } },
+      { name: 'Expenses', type: 'bar', data: expenses, itemStyle: { color: '#fb923c', borderRadius: [3, 3, 0, 0] } },
     ],
   }
   cashFlowChart.setOption(option, true)
@@ -680,35 +553,99 @@ function renderDistChart() {
 
   const option = {
     backgroundColor: 'transparent',
-    tooltip: {
-      trigger: 'axis',
-      backgroundColor: 'rgba(11, 15, 25, 0.95)',
-      borderColor: '#334155',
-      textStyle: { color: '#f8fafc', fontSize: 12, fontFamily: 'JetBrains Mono' },
-    },
+    tooltip: { trigger: 'axis', backgroundColor: 'rgba(11, 15, 25, 0.95)', borderColor: '#334155', textStyle: { color: '#f8fafc', fontSize: 12, fontFamily: 'JetBrains Mono' } },
     grid: { top: 30, left: 55, right: 25, bottom: 35 },
-    xAxis: {
-      type: 'category',
-      data: bins,
-      axisLine: { lineStyle: { color: '#334155' } },
-      axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', interval: Math.max(1, Math.floor(bins.length / 8)) },
-    },
-    yAxis: {
-      type: 'value',
-      axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono' },
-      splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } },
-    },
-    series: [
-      {
-        name: 'Scenarios',
-        type: 'bar',
-        data: counts,
-        barWidth: '85%',
-        itemStyle: { borderRadius: [3, 3, 0, 0] },
-      },
-    ],
+    xAxis: { type: 'category', data: bins, axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', interval: Math.max(1, Math.floor(bins.length / 8)) } },
+    yAxis: { type: 'value', axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono' }, splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } } },
+    series: [{ name: 'Scenarios', type: 'bar', data: counts, barWidth: '85%', itemStyle: { borderRadius: [3, 3, 0, 0] } }],
   }
   distChart.setOption(option, true)
+}
+
+function renderPortfolioCharts() {
+  if (!portfolioData.value) return
+
+  // 1. Portfolio Aggregate Cash Flow Chart
+  if (portfolioCfChartRef.value && portfolioData.value.annual_cash_flows) {
+    if (!portfolioCfChart) portfolioCfChart = echarts.init(portfolioCfChartRef.value)
+    const cfs = portfolioData.value.annual_cash_flows
+    const years = cfs.map(d => `Yr ${d.year}`)
+    const premiums = cfs.map(d => d.premium_income)
+    const claims = cfs.map(d => d.death_claims + d.maturity_benefits)
+    const expenses = cfs.map(d => d.total_expenses)
+    const netLiability = cfs.map(d => d.net_liability_cf)
+
+    const cfOption = {
+      backgroundColor: 'transparent',
+      tooltip: { trigger: 'axis', backgroundColor: 'rgba(11, 15, 25, 0.95)', borderColor: '#334155', textStyle: { color: '#f8fafc', fontSize: 12, fontFamily: 'JetBrains Mono' } },
+      legend: { data: ['Premium Inflows', 'Claims & Maturities', 'Expenses', 'Net Liability CF'], textStyle: { color: '#94a3b8', fontSize: 11 }, top: 0, right: 10 },
+      grid: { top: 40, left: 75, right: 25, bottom: 35 },
+      xAxis: { type: 'category', data: years, axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', interval: Math.max(1, Math.floor(years.length / 10)) } },
+      yAxis: { type: 'value', axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', formatter: v => `$${(v / 1_000_000).toFixed(1)}M` }, splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } } },
+      series: [
+        { name: 'Premium Inflows', type: 'bar', stack: 'inflow', data: premiums, itemStyle: { color: '#34d399', borderRadius: [2, 2, 0, 0] } },
+        { name: 'Claims & Maturities', type: 'bar', stack: 'outflow', data: claims, itemStyle: { color: '#f43f5e', borderRadius: [2, 2, 0, 0] } },
+        { name: 'Expenses', type: 'bar', stack: 'outflow', data: expenses, itemStyle: { color: '#fb923c', borderRadius: [2, 2, 0, 0] } },
+        { name: 'Net Liability CF', type: 'line', data: netLiability, smooth: true, symbol: 'none', lineStyle: { width: 2, color: '#38bdf8' } },
+      ],
+    }
+    portfolioCfChart.setOption(cfOption, true)
+  }
+
+  // 2. Product Breakdown Donut Chart
+  if (portfolioProdChartRef.value && portfolioData.value.product_breakdown) {
+    if (!portfolioProdChart) portfolioProdChart = echarts.init(portfolioProdChartRef.value)
+    const prodEntries = Object.entries(portfolioData.value.product_breakdown).map(([k, v]) => ({
+      name: k.replace('_', ' ').toUpperCase(),
+      value: v.sum_assured,
+    }))
+
+    const prodOption = {
+      backgroundColor: 'transparent',
+      tooltip: { trigger: 'item', backgroundColor: 'rgba(11, 15, 25, 0.95)', borderColor: '#334155', textStyle: { color: '#f8fafc', fontSize: 12, fontFamily: 'JetBrains Mono' } },
+      legend: { orient: 'vertical', left: 'left', top: 'middle', textStyle: { color: '#94a3b8', fontSize: 11 } },
+      series: [
+        {
+          name: 'Face Amount Share',
+          type: 'pie',
+          radius: ['45%', '75%'],
+          center: ['65%', '50%'],
+          avoidLabelOverlap: false,
+          itemStyle: { borderRadius: 6, borderColor: '#0b0f19', borderWidth: 2 },
+          label: { show: false },
+          data: prodEntries,
+          color: ['#38bdf8', '#ec4899', '#34d399', '#fb923c'],
+        },
+      ],
+    }
+    portfolioProdChart.setOption(prodOption, true)
+  }
+
+  // 3. Age Cohort Distribution Bar Chart
+  if (portfolioAgeChartRef.value && portfolioData.value.age_breakdown) {
+    if (!portfolioAgeChart) portfolioAgeChart = echarts.init(portfolioAgeChartRef.value)
+    const ageEntries = Object.entries(portfolioData.value.age_breakdown)
+    const categories = ageEntries.map(([k]) => k)
+    const counts = ageEntries.map(([, v]) => v.count)
+    const bels = ageEntries.map(([, v]) => v.bel)
+
+    const ageOption = {
+      backgroundColor: 'transparent',
+      tooltip: { trigger: 'axis', backgroundColor: 'rgba(11, 15, 25, 0.95)', borderColor: '#334155', textStyle: { color: '#f8fafc', fontSize: 12, fontFamily: 'JetBrains Mono' } },
+      legend: { data: ['Policy Count', 'Net BEL'], textStyle: { color: '#94a3b8', fontSize: 11 }, top: 0, right: 10 },
+      grid: { top: 40, left: 65, right: 55, bottom: 35 },
+      xAxis: { type: 'category', data: categories, axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8', fontSize: 11, fontFamily: 'JetBrains Mono' } },
+      yAxis: [
+        { type: 'value', name: 'Count', axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono' }, splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } } },
+        { type: 'value', name: 'BEL ($)', axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: { show: false } },
+      ],
+      series: [
+        { name: 'Policy Count', type: 'bar', data: counts, itemStyle: { color: '#a855f7', borderRadius: [4, 4, 0, 0] } },
+        { name: 'Net BEL', type: 'line', yAxisIndex: 1, data: bels, smooth: true, itemStyle: { color: '#f43f5e' } },
+      ],
+    }
+    portfolioAgeChart.setOption(ageOption, true)
+  }
 }
 
 function renderAllCharts() {
@@ -717,6 +654,7 @@ function renderAllCharts() {
   renderFanChart()
   renderCashFlowChart()
   renderDistChart()
+  renderPortfolioCharts()
 }
 
 // ────────────────────────────────────────────────────────────
@@ -733,6 +671,9 @@ onMounted(async () => {
     fanChart?.resize()
     cashFlowChart?.resize()
     distChart?.resize()
+    portfolioCfChart?.resize()
+    portfolioProdChart?.resize()
+    portfolioAgeChart?.resize()
   })
 
   if (heroChartRef.value) resizeObserver.observe(heroChartRef.value)
@@ -740,6 +681,9 @@ onMounted(async () => {
   if (fanChartRef.value) resizeObserver.observe(fanChartRef.value)
   if (cashFlowChartRef.value) resizeObserver.observe(cashFlowChartRef.value)
   if (distChartRef.value) resizeObserver.observe(distChartRef.value)
+  if (portfolioCfChartRef.value) resizeObserver.observe(portfolioCfChartRef.value)
+  if (portfolioProdChartRef.value) resizeObserver.observe(portfolioProdChartRef.value)
+  if (portfolioAgeChartRef.value) resizeObserver.observe(portfolioAgeChartRef.value)
 })
 
 onUnmounted(() => {
@@ -753,6 +697,9 @@ onUnmounted(() => {
   fanChart?.dispose()
   cashFlowChart?.dispose()
   distChart?.dispose()
+  portfolioCfChart?.dispose()
+  portfolioProdChart?.dispose()
+  portfolioAgeChart?.dispose()
 })
 </script>
 
@@ -793,6 +740,7 @@ onUnmounted(() => {
           <button
             v-for="tab in [
               { id: 'overview', label: 'Executive Overview' },
+              { id: 'portfolio', label: 'Portfolio Batch (CSV)' },
               { id: 'reserves', label: 'Policy Reserves (_t V)' },
               { id: 'stochastic', label: 'Vasicek ESG & VaR' },
               { id: 'cashflows', label: 'Cashflow Waterfall' },
@@ -801,7 +749,7 @@ onUnmounted(() => {
             :key="tab.id"
             @click="activeTab = tab.id; nextTick(() => renderAllCharts())"
             :class="[
-              'px-3.5 py-1.5 text-xs font-medium rounded-lg transition-all duration-200',
+              'px-3 py-1.5 text-xs font-medium rounded-lg transition-all duration-200',
               activeTab === tab.id
                 ? 'bg-gradient-to-r from-fuchsia-600 to-rose-600 text-white shadow-md shadow-fuchsia-600/30'
                 : 'text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
@@ -843,7 +791,7 @@ onUnmounted(() => {
     </header>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 2. Error Notification Banner (if FastAPI is offline) -->
+    <!-- 2. Error Notification Banner -->
     <!-- ──────────────────────────────────────────────────────────── -->
     <div v-if="errorMessage || backendStatus === 'error'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4 relative z-20">
       <div class="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-200 text-xs font-mono flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg shadow-rose-500/10">
@@ -893,7 +841,6 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- Progress Track -->
         <div class="w-full bg-slate-900/80 rounded-full h-2.5 overflow-hidden border border-white/[0.08]">
           <div
             class="h-full bg-gradient-to-r from-fuchsia-500 via-rose-500 to-amber-400 rounded-full transition-all duration-150 shadow-[0_0_12px_rgba(236,72,153,0.6)]"
@@ -909,15 +856,15 @@ onUnmounted(() => {
     <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-4 text-center relative z-10">
       <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-white/[0.04] border border-fuchsia-500/20 backdrop-blur-xl mb-4 shadow-[0_0_20px_rgba(236,72,153,0.15)]">
         <span class="h-1.5 w-1.5 rounded-full bg-fuchsia-400 animate-pulse"></span>
-        <span class="text-xs font-medium text-slate-300">FastAPI Asynchronous Pipeline & WebSocket Streaming</span>
-        <span class="text-[10px] text-fuchsia-400 font-mono">⚡ Vectorized Chunks</span>
+        <span class="text-xs font-medium text-slate-300">Seriatim Batch Portfolio & Monte Carlo Engine</span>
+        <span class="text-[10px] text-fuchsia-400 font-mono">⚡ 80k+ Policies/sec</span>
       </div>
 
       <h1 class="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight text-white max-w-4xl mx-auto leading-tight">
         The fastest way to <span class="text-transparent bg-clip-text bg-gradient-to-r from-fuchsia-400 via-rose-400 to-amber-300">model, value & stress-test</span> actuarial liabilities.
       </h1>
       <p class="mt-3 text-sm text-slate-400 max-w-2xl mx-auto font-mono">
-        Prospective reserves ${_t V}$, Fackler recurrence, multi-decrement GPV, and Vasicek Monte Carlo risk simulation.
+        Prospective reserves ${_t V}$, multi-decrement portfolio BEL, and Vasicek Monte Carlo risk simulation.
       </p>
 
       <!-- Preset Quick Bar -->
@@ -942,6 +889,12 @@ onUnmounted(() => {
           ♾️ Whole Life ($500k)
         </button>
         <button
+          @click="activeTab = 'portfolio'; runSamplePortfolioDemo(1000)"
+          class="px-3 py-1 rounded-lg text-xs font-mono font-medium bg-white/[0.04] hover:bg-emerald-500/20 border border-white/[0.08] hover:border-emerald-500/40 text-emerald-300 transition"
+        >
+          📁 Batch Portfolio (1,000 Policies)
+        </button>
+        <button
           @click="applyPreset('large_scale_10k')"
           class="px-3 py-1 rounded-lg text-xs font-mono font-medium bg-white/[0.04] hover:bg-amber-500/20 border border-white/[0.08] hover:border-amber-500/40 text-amber-300 transition"
         >
@@ -951,9 +904,209 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 5. Hero Visualizer Card (Showcase Bar Chart) -->
+    <!-- 5. PORTFOLIO BATCH WORKSPACE TAB -->
     <!-- ──────────────────────────────────────────────────────────── -->
-    <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 relative z-10">
+    <section v-if="activeTab === 'portfolio'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 relative z-10 space-y-6">
+      <!-- Upload & Configuration Banner -->
+      <div class="neon-border-gradient shadow-2xl">
+        <div class="p-6 space-y-4">
+          <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-white/[0.08] pb-4">
+            <div>
+              <h2 class="text-lg font-bold text-white tracking-wide flex items-center space-x-2">
+                <span class="h-3 w-3 rounded-full bg-emerald-400 shadow-[0_0_10px_#34d399]"></span>
+                <span>Seriatim Portfolio Batch Valuation</span>
+              </h2>
+              <p class="text-xs text-slate-400 font-mono">
+                Upload CSV or run synthetic portfolios to calculate aggregate liabilities, cash flows & segment distributions.
+              </p>
+            </div>
+
+            <div class="flex items-center space-x-3">
+              <button
+                @click="runSamplePortfolioDemo(1000)"
+                :disabled="portfolioLoading"
+                class="px-4 py-2 bg-gradient-to-r from-emerald-500 to-teal-600 hover:opacity-90 text-white rounded-xl text-xs font-mono font-semibold transition shadow-lg shadow-emerald-500/20 flex items-center space-x-2"
+              >
+                <svg class="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <span>{{ portfolioLoading ? 'Valuing Portfolio...' : '⚡ Quick Demo (1,000 Policies)' }}</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Drag and Drop Dropzone -->
+          <div
+            @dragover.prevent="isDragging = true"
+            @dragleave.prevent="isDragging = false"
+            @drop.prevent="handlePortfolioDrop"
+            :class="[
+              'border-2 border-dashed rounded-xl p-8 text-center transition cursor-pointer',
+              isDragging
+                ? 'border-emerald-400 bg-emerald-500/10 shadow-[0_0_30px_rgba(52,211,153,0.2)]'
+                : 'border-white/[0.15] bg-[#070b14]/50 hover:border-emerald-400/50 hover:bg-[#0b0f19]'
+            ]"
+            @click="$refs.fileInput.click()"
+          >
+            <input
+              type="file"
+              ref="fileInput"
+              accept=".csv"
+              class="hidden"
+              @change="handlePortfolioFileUpload"
+            />
+            <div class="flex flex-col items-center space-y-2">
+              <div class="h-12 w-12 rounded-full bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                </svg>
+              </div>
+              <p class="text-sm font-semibold text-white">
+                Drag and drop your Policy CSV here, or <span class="text-emerald-400 underline">browse files</span>
+              </p>
+              <p class="text-[11px] font-mono text-slate-500">
+                Supported columns: policy_id, issue_age, term_years, sum_assured, gross_premium, product_type, policy_duration_years
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Portfolio Summary Cards -->
+      <div v-if="portfolioData" class="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <div class="neon-glass rounded-2xl p-4 border border-white/[0.08]">
+          <div class="text-xs font-mono text-slate-400">TOTAL POLICIES</div>
+          <div class="text-2xl font-bold font-mono text-white mt-1">
+            {{ portfolioData.total_policies.toLocaleString() }}
+          </div>
+          <div class="text-[11px] text-emerald-400 font-mono mt-1">Seriatim In-Force</div>
+        </div>
+
+        <div class="neon-glass rounded-2xl p-4 border border-white/[0.08]">
+          <div class="text-xs font-mono text-slate-400">TOTAL SUM ASSURED</div>
+          <div class="text-2xl font-bold font-mono text-sky-300 mt-1">
+            {{ formatCurrency(portfolioData.total_sum_assured) }}
+          </div>
+          <div class="text-[11px] text-slate-400 font-mono mt-1">Total Face Amount</div>
+        </div>
+
+        <div class="neon-glass rounded-2xl p-4 border border-white/[0.08]">
+          <div class="text-xs font-mono text-slate-400">PV FUTURE BENEFITS</div>
+          <div class="text-2xl font-bold font-mono text-rose-300 mt-1">
+            {{ formatCurrency(portfolioData.total_pvfb) }}
+          </div>
+          <div class="text-[11px] text-slate-400 font-mono mt-1">Claims + Maturities</div>
+        </div>
+
+        <div class="neon-glass rounded-2xl p-4 border border-white/[0.08]">
+          <div class="text-xs font-mono text-slate-400">PV FUTURE PREMIUMS</div>
+          <div class="text-2xl font-bold font-mono text-emerald-300 mt-1">
+            {{ formatCurrency(portfolioData.total_pvfp) }}
+          </div>
+          <div class="text-[11px] text-slate-400 font-mono mt-1">Expected Inflows</div>
+        </div>
+
+        <div class="neon-glass rounded-2xl p-4 border border-white/[0.08]">
+          <div class="text-xs font-mono text-slate-400">TOTAL PORTFOLIO BEL</div>
+          <div class="text-2xl font-bold font-mono text-fuchsia-300 mt-1">
+            {{ formatCurrency(portfolioData.total_bel) }}
+          </div>
+          <div class="text-[11px] text-fuchsia-400 font-mono mt-1">Net Liability Provision</div>
+        </div>
+      </div>
+
+      <!-- Portfolio Charts Workspace -->
+      <div v-if="portfolioData" class="space-y-6">
+        <!-- 1. Portfolio Aggregate Cash Flow Waterfall -->
+        <div class="neon-glass rounded-2xl p-5 border border-white/[0.08]">
+          <div class="flex items-center justify-between mb-2">
+            <div>
+              <h3 class="text-sm font-bold text-white tracking-wide">
+                Aggregate Portfolio Multi-Year Cash Flow Projection
+              </h3>
+              <p class="text-xs text-slate-400 font-mono">
+                Annual aggregate premium inflows (Green), death/maturity claims (Red), and expenses (Orange).
+              </p>
+            </div>
+          </div>
+          <div ref="portfolioCfChartRef" class="w-full h-80"></div>
+        </div>
+
+        <!-- 2. Breakdown Donut & Age Bar Grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div class="neon-glass rounded-2xl p-5 border border-white/[0.08]">
+            <h3 class="text-sm font-bold text-white tracking-wide mb-1">
+              Portfolio Composition by Product Line
+            </h3>
+            <p class="text-xs text-slate-400 font-mono mb-2">Face amount exposure distribution</p>
+            <div ref="portfolioProdChartRef" class="w-full h-72"></div>
+          </div>
+
+          <div class="neon-glass rounded-2xl p-5 border border-white/[0.08]">
+            <h3 class="text-sm font-bold text-white tracking-wide mb-1">
+              Cohort Breakdown by Attained Age Bracket
+            </h3>
+            <p class="text-xs text-slate-400 font-mono mb-2">Policy count and net BEL by age cohort</p>
+            <div ref="portfolioAgeChartRef" class="w-full h-72"></div>
+          </div>
+        </div>
+
+        <!-- 3. Sample Seriatim Table -->
+        <div class="neon-glass rounded-2xl p-5 border border-white/[0.08]">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="text-sm font-bold text-white tracking-wide">
+                Sample Seriatim Valuation Output
+              </h3>
+              <p class="text-xs text-slate-400 font-mono">
+                Individual contract records with discounted PVFB, PVFP, and Net BEL.
+              </p>
+            </div>
+            <span class="text-xs font-mono text-slate-400">
+              Displaying first {{ portfolioData.sample_seriatim.length }} records
+            </span>
+          </div>
+
+          <div class="overflow-x-auto border border-white/[0.08] rounded-xl max-h-[420px]">
+            <table class="min-w-full text-left text-xs divide-y divide-white/[0.08] font-mono">
+              <thead class="bg-[#0b0f19] text-slate-300 sticky top-0 z-10">
+                <tr>
+                  <th class="px-3 py-2.5 font-semibold">Policy ID</th>
+                  <th class="px-3 py-2.5 font-semibold">Product</th>
+                  <th class="px-3 py-2.5 font-semibold">Age</th>
+                  <th class="px-3 py-2.5 font-semibold">Term</th>
+                  <th class="px-3 py-2.5 font-semibold">Face Amount</th>
+                  <th class="px-3 py-2.5 font-semibold">Gross Premium</th>
+                  <th class="px-3 py-2.5 font-semibold">PVFB</th>
+                  <th class="px-3 py-2.5 font-semibold">PVFP</th>
+                  <th class="px-3 py-2.5 font-semibold">Net BEL</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-white/[0.04] bg-[#070b14]/60 text-slate-300">
+                <tr v-for="pol in portfolioData.sample_seriatim" :key="pol.policy_id" class="hover:bg-white/[0.04]">
+                  <td class="px-3 py-2 text-emerald-400 font-bold">{{ pol.policy_id }}</td>
+                  <td class="px-3 py-2 uppercase text-slate-300">{{ pol.product_type }}</td>
+                  <td class="px-3 py-2">{{ pol.issue_age }}</td>
+                  <td class="px-3 py-2">{{ pol.term_years }} yrs</td>
+                  <td class="px-3 py-2 text-sky-300">{{ formatCurrency(pol.sum_assured) }}</td>
+                  <td class="px-3 py-2 text-emerald-400">{{ formatCurrency(pol.gross_premium) }}</td>
+                  <td class="px-3 py-2 text-rose-300">{{ formatCurrency(pol.pvfb) }}</td>
+                  <td class="px-3 py-2 text-emerald-300">{{ formatCurrency(pol.pvfp) }}</td>
+                  <td :class="['px-3 py-2 font-bold', pol.bel > 0 ? 'text-rose-400' : 'text-emerald-400']">
+                    {{ formatCurrency(pol.bel) }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ──────────────────────────────────────────────────────────── -->
+    <!-- 6. Hero Visualizer Card (Showcase Bar Chart for Single Contract) -->
+    <!-- ──────────────────────────────────────────────────────────── -->
+    <section v-if="activeTab !== 'portfolio'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 relative z-10">
       <div class="neon-border-gradient shadow-2xl">
         <div class="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
           <!-- Left: Big Neon Chart -->
@@ -1020,9 +1173,9 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 6. Top KPI Metric Cards Strip -->
+    <!-- 7. Top KPI Metric Cards Strip -->
     <!-- ──────────────────────────────────────────────────────────── -->
-    <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 relative z-10">
+    <section v-if="activeTab !== 'portfolio'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 relative z-10">
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <!-- Metric 1 -->
         <div class="neon-glass rounded-2xl p-4 border border-white/[0.08] relative overflow-hidden group hover:border-sky-500/40 transition">
@@ -1079,9 +1232,9 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 7. Main Workspace Layout (Sidebar Controls + Multi-Chart Workspace) -->
+    <!-- 8. Main Workspace Layout (Sidebar Controls + Multi-Chart Workspace) -->
     <!-- ──────────────────────────────────────────────────────────── -->
-    <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 relative z-10">
+    <section v-if="activeTab !== 'portfolio'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 relative z-10">
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <!-- Control Deck Sidebar (1/3) -->
         <div class="lg:col-span-1 space-y-6">
@@ -1380,7 +1533,7 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 8. Footer -->
+    <!-- 9. Footer -->
     <!-- ──────────────────────────────────────────────────────────── -->
     <footer class="border-t border-white/[0.08] bg-[#030712] py-6 mt-12 relative z-10">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between text-xs font-mono text-slate-500 gap-2">
@@ -1389,7 +1542,7 @@ onUnmounted(() => {
           <span>•</span>
           <span>SOA Illustrative Life Table (ω=110)</span>
           <span>•</span>
-          <span>FastAPI WebSockets Streaming</span>
+          <span>Portfolio Batch Engine</span>
         </div>
         <div>FastAPI • Vue 3 • Apache ECharts • TailwindCSS</div>
       </div>
