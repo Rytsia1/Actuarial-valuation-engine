@@ -428,5 +428,61 @@ class StressTestResponse(BaseModel):
     reserve_trajectory: list[dict[str, Any]]
 
 
+# ────────────────────────────────────────────────────────────
+# Visual Node-Based Contract Logic Builder Schemas
+# ────────────────────────────────────────────────────────────
+
+class GraphNodeData(BaseModel):
+    """Single node specification in the visual contract builder DAG."""
+
+    id: str = Field(description="Unique node identifier.")
+    type: str = Field(description="Node type (policyInput, inflow, contingency, outflow, valuationSink, accumulator).")
+    data: dict[str, Any] = Field(default_factory=dict, description="Node parameters and reactive properties.")
+    position: Optional[dict[str, float]] = Field(default=None, description="Canvas (x, y) coordinates.")
+
+
+class GraphEdgeData(BaseModel):
+    """Directed edge connecting two ports in the contract logic DAG."""
+
+    id: Optional[str] = Field(default=None, description="Unique edge identifier.")
+    source: str = Field(description="Source node ID.")
+    target: str = Field(description="Target node ID.")
+    sourceHandle: Optional[str] = Field(default=None, description="Origin port handle.")
+    targetHandle: Optional[str] = Field(default=None, description="Destination port handle.")
+
+
+class ContractGraphPayload(BaseModel):
+    """Complete serialized node-graph payload submitted for cash flow valuation."""
+
+    contract_id: Optional[str] = Field(default=None, description="Optional contract / product code.")
+    nodes: list[GraphNodeData] = Field(default_factory=list, description="List of nodes in the graph.")
+    edges: list[GraphEdgeData] = Field(default_factory=list, description="List of directed edges in the graph.")
+    discount_rate: Optional[float] = Field(default=0.05, ge=0.0, le=0.50, description="Valuation discount rate.")
+
+
+class SimulateGraphResponse(BaseModel):
+    """Projection output and cash flow waterfall returned by the graph simulator."""
+
+    contract_id: str
+    product_name: str
+    issue_age: int
+    term: int
+    sum_assured: float
+    annual_premium: float
+    total_bel: float
+    years: list[int]
+    ages: list[int]
+    inforce_boy: list[float]
+    premiums: list[float]
+    death_claims: list[float]
+    maturity_payouts: list[float]
+    surrender_payouts: list[float]
+    expenses: list[float]
+    net_cash_flow: list[float]
+    discounted_net_cf: list[float]
+    reserves: list[float]
+    breakdown: dict[str, Any] = Field(default_factory=dict)
+
+
 
 

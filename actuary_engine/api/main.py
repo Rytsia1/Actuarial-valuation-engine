@@ -47,6 +47,8 @@ from actuary_engine.api.schemas import (
     StochasticValuationResponse,
     StressTestRequest,
     StressTestResponse,
+    ContractGraphPayload,
+    SimulateGraphResponse,
     TableListItem,
     TableUploadResponse,
     TerminalDistribution,
@@ -69,6 +71,7 @@ from actuary_engine.tables.commutation import CommutationFunctions
 from actuary_engine.tables.mortality_table import MortalityTable
 from actuary_engine.tables.parsers import TableParsingError, parse_mortality_file
 from actuary_engine.tables.registry import TableMetadata, table_registry
+from actuary_engine.valuation.graph_parser import ContractGraphSimulator
 from actuary_engine.valuation.gpv import GrossPremiumValuation
 from actuary_engine.valuation.ifrs17 import IFRS17Engine
 from actuary_engine.valuation.portfolio import PortfolioSummary, PortfolioValuationEngine
@@ -1091,6 +1094,19 @@ def evaluate_stress_test_sliders(request: StressTestRequest) -> StressTestRespon
     except Exception as e:
         logger.exception("Real-time stress test valuation failed: %s", e)
         raise HTTPException(status_code=500, detail=f"Stress test valuation error: {e}") from e
+
+
+@app.post("/api/v1/contracts/simulate-graph", response_model=SimulateGraphResponse)
+def simulate_contract_graph(payload: ContractGraphPayload) -> SimulateGraphResponse:
+    """Evaluate a visual node-based contract logic blueprint into deterministic actuarial projections."""
+    try:
+        simulator = ContractGraphSimulator(table_lookup=table_registry)
+        return simulator.simulate(payload)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Contract graph simulation failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Graph simulation error: {e}") from e
 
 
 

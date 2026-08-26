@@ -18,6 +18,7 @@ import {
 } from './services/actuaryApi'
 import { connectSimulationSocket } from './services/simulationSocket'
 import StressTestDashboard from './components/StressTestDashboard.vue'
+import ContractBuilderView from './views/ContractBuilderView.vue'
 
 // ────────────────────────────────────────────────────────────
 // Reactive Dashboard State
@@ -136,6 +137,7 @@ let resizeObserver = null
 // Navigation definition
 const navItems = [
   { id: 'overview', label: 'Overview', icon: 'chart' },
+  { id: 'builder', label: 'Logic Builder', icon: 'blueprint' },
   { id: 'stochastic', label: 'ESG & Risk', icon: 'risk' },
   { id: 'sensitivity', label: 'Stress Testing', icon: 'tornado' },
   { id: 'ifrs17', label: 'IFRS 17', icon: 'balance' },
@@ -956,7 +958,10 @@ onUnmounted(() => {
           :class="['sidebar-nav-item w-full text-left', activeTab === item.id ? 'active' : '']"
         >
           <!-- Icons -->
-          <svg v-if="item.icon === 'chart'" class="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+          <svg v-if="item.icon === 'blueprint'" class="h-4 w-4 flex-shrink-0 text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5c-3.162 0-6.133-.815-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418" />
+          </svg>
+          <svg v-else-if="item.icon === 'chart'" class="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
             <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
           </svg>
           <svg v-else-if="item.icon === 'risk'" class="h-4 w-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.8">
@@ -1096,6 +1101,9 @@ onUnmounted(() => {
         <div class="mt-4 flex flex-wrap gap-2">
           <button @click="applyPreset('endowment_20')" class="btn-secondary text-[12px] px-3 py-1.5">20-Yr Endowment</button>
           <button @click="applyPreset('term_30')" class="btn-secondary text-[12px] px-3 py-1.5">30-Yr Term</button>
+          <button @click="switchTab('builder')" class="btn-primary text-[12px] px-3 py-1.5 flex items-center space-x-1.5">
+            <span>✨</span><span>Logic Builder</span>
+          </button>
           <button @click="applyPreset('large_scale_10k')" class="btn-secondary text-[12px] px-3 py-1.5">10K Monte Carlo</button>
           <button @click="switchTab('sensitivity')" class="btn-secondary text-[12px] px-3 py-1.5">Sensitivity Shock</button>
           <button @click="switchTab('portfolio'); runSamplePortfolioDemo(1000)" class="btn-secondary text-[12px] px-3 py-1.5">Batch Portfolio</button>
@@ -1606,6 +1614,13 @@ onUnmounted(() => {
             </div>
           </div>
         </div>
+      </section>
+
+      <!-- ═══════════════════════════════════════════════════════ -->
+      <!-- CONTRACT LOGIC BUILDER TAB                              -->
+      <!-- ═══════════════════════════════════════════════════════ -->
+      <section v-if="activeTab === 'builder'" class="p-0">
+        <ContractBuilderView />
       </section>
 
       <!-- ═══════════════════════════════════════════════════════ -->

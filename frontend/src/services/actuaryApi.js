@@ -270,5 +270,19 @@ export async function runStressTest(payload) {
   });
 }
 
+/**
+ * Simulate visual node-based contract graph DAG
+ * POST /api/v1/contracts/simulate-graph
+ *
+ * @param {Object} payload - ContractGraphPayload
+ * @returns {Promise<Object>} SimulateGraphResponse
+ */
+export async function simulateContractGraph(payload) {
+  return await apiRequest('/contracts/simulate-graph', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 
 
