@@ -417,3 +417,128 @@ class StochasticValuationEngine:
             f"StochasticValuationEngine(table='{self.table.name}', "
             f"esg={self.esg!r}, dynamic_lapse={self.dynamic_lapse is not None})"
         )
+
+
+def compute_quantile_trajectory(
+    path_matrix: np.ndarray,
+    percentiles: tuple[float, ...] = (5.0, 25.0, 50.0, 75.0, 95.0),
+) -> dict[str, list[float]]:
+    """Compute cross-sectional quantiles at each timestep for a 2D path matrix (n_scenarios x n_timesteps).
+
+    Args:
+        path_matrix: 2D numpy array of shape (n_scenarios, n_timesteps).
+        percentiles: Tuple of percentile levels (5, 25, 50, 75, 95).
+
+    Returns:
+        Dictionary with keys 'p5', 'p25', 'p50', 'p75', 'p95', each containing a list of floats.
+    """
+    if path_matrix.ndim != 2 or path_matrix.shape[0] == 0 or path_matrix.shape[1] == 0:
+        return {"p5": [], "p25": [], "p50": [], "p75": [], "p95": []}
+
+    q_matrix = np.percentile(path_matrix, percentiles, axis=0)
+
+    return {
+        "p5": [round(float(v), 5) for v in q_matrix[0]],
+        "p25": [round(float(v), 5) for v in q_matrix[1]],
+        "p50": [round(float(v), 5) for v in q_matrix[2]],
+        "p75": [round(float(v), 5) for v in q_matrix[3]],
+        "p95": [round(float(v), 5) for v in q_matrix[4]],
+    }
+
+
+def compute_terminal_distribution(
+    terminal_values: np.ndarray,
+    bins: int = 40,
+) -> dict[str, Any]:
+    """Compute statistical moments, tail risk metrics, and histogram binning for terminal liabilities.
+
+    Args:
+        terminal_values: 1D array of scenario outcomes.
+        bins: Number of histogram bins.
+
+    Returns:
+        Dictionary with bin_edges, counts, mean, std, skewness, var_95, cvar_95, var_99, cvar_99.
+    """
+    if len(terminal_values) == 0:
+        return {
+            "bin_edges": [],
+            "counts": [],
+            "mean": 0.0,
+            "std": 0.0,
+            "skewness": 0.0,
+            "var_95": 0.0,
+            "cvar_95": 0.0,
+            "var_99": 0.0,
+            "cvar_99": 0.0,
+        }
+
+    arr = np.asarray(terminal_values, dtype=np.float64)
+    counts, bin_edges = np.histogram(arr, bins=bins)
+
+    mean = float(np.mean(arr))
+    std = float(np.std(arr, ddof=1)) if len(arr) > 1 else 0.0
+
+    if std > 1e-12:
+        skewness = float(np.mean(((arr - mean) / std) ** 3))
+    else:
+        skewness = 0.0
+
+    var_95 = float(np.percentile(arr, 95.0))
+    var_99 = float(np.percentile(arr, 99.0))
+
+    tail_95 = arr[arr >= var_95]
+    cvar_95 = float(np.mean(tail_95)) if len(tail_95) > 0 else var_95
+
+    tail_99 = arr[arr >= var_99]
+    cvar_99 = float(np.mean(tail_99)) if len(tail_99) > 0 else var_99
+
+    return {
+        "bin_edges": [round(float(e), 2) for e in bin_edges],
+        "counts": [int(c) for c in counts],
+        "mean": round(mean, 2),
+        "std": round(std, 2),
+        "skewness": round(skewness, 4),
+        "var_95": round(var_95, 2),
+        "cvar_95": round(cvar_95, 2),
+        "var_99": round(var_99, 2),
+        "cvar_99": round(cvar_99, 2),
+    }
+
+
+def sample_representative_paths(
+    path_matrix: np.ndarray,
+    max_paths: int = 15,
+) -> list[list[float]]:
+    """Sample a compressed representative subset of paths (median, extreme min, extreme max, stratified).
+
+    Args:
+        path_matrix: 2D numpy array of paths (n_scenarios, n_timesteps).
+        max_paths: Maximum number of representative traces to return.
+
+    Returns:
+        List of representative float paths.
+    """
+    n_scenarios = len(path_matrix)
+    if n_scenarios == 0:
+        return []
+    if n_scenarios <= max_paths:
+        return [[round(float(v), 5) for v in path] for path in path_matrix]
+
+    terminal_vals = path_matrix[:, -1]
+    sorted_indices = np.argsort(terminal_vals)
+
+    # Evenly spaced quantiles across the sorted paths
+    quantile_positions = np.linspace(0, n_scenarios - 1, max_paths).round().astype(int)
+    unique_positions = sorted(list(set(quantile_positions)))
+
+    selected_indices = [int(sorted_indices[pos]) for pos in unique_positions]
+    if len(selected_indices) < max_paths:
+        for idx in sorted_indices:
+            if int(idx) not in selected_indices:
+                selected_indices.append(int(idx))
+            if len(selected_indices) == max_paths:
+                break
+
+    return [[round(float(v), 5) for v in path_matrix[idx]] for idx in selected_indices]
+
+

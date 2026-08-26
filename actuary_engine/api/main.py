@@ -40,12 +40,14 @@ from actuary_engine.api.schemas import (
     LeeCarterForecastResponse,
     PortfolioValuationJSONRequest,
     PortfolioValuationResponse,
+    QuantileTrajectory,
     SensitivityRequest,
     SensitivityResponse,
     StochasticValuationRequest,
     StochasticValuationResponse,
     TableListItem,
     TableUploadResponse,
+    TerminalDistribution,
 )
 from actuary_engine.curves.yield_curve import MarketYieldCurve
 from actuary_engine.models.assumptions import ExpenseAssumption, InterestAssumption, LapseAssumption
@@ -55,7 +57,12 @@ from actuary_engine.stochastic.dynamic_lapse import DynamicLapseModel
 from actuary_engine.stochastic.esg import VasicekESG
 from actuary_engine.stochastic.esg_advanced import CIRModel, CIRParams, HullWhite1FModel
 from actuary_engine.stochastic.lee_carter import LeeCarterModel
-from actuary_engine.stochastic.monte_carlo import StochasticValuationEngine
+from actuary_engine.stochastic.monte_carlo import (
+    StochasticValuationEngine,
+    compute_quantile_trajectory,
+    compute_terminal_distribution,
+    sample_representative_paths,
+)
 from actuary_engine.tables.commutation import CommutationFunctions
 from actuary_engine.tables.mortality_table import MortalityTable
 from actuary_engine.tables.parsers import TableParsingError, parse_mortality_file
@@ -375,6 +382,33 @@ async def _compute_stochastic_valuation_core(
         seed=request.seed,
     )
 
+    # 1. Server-side quantile extraction across projection timesteps
+    quantiles_dict = compute_quantile_trajectory(rates_paths)
+    quantiles_obj = QuantileTrajectory(**quantiles_dict)
+
+    # 2. Server-side terminal distribution and histogram binning (40 bins)
+    term_dist_dict = compute_terminal_distribution(stoch_res.scenario_bel, bins=40)
+    term_dist_obj = TerminalDistribution(**term_dist_dict)
+
+    # 3. Compressed representative sample traces (max 15 paths)
+    sample_paths = sample_representative_paths(rates_paths, max_paths=15)
+
+    timesteps: list[Union[int, str]] = list(range(rates_paths.shape[1]))
+
+    # Summary KPI dictionary
+    summary_kpis = {
+        "mean_bel": round(stoch_res.mean_bel, 2),
+        "std_bel": round(stoch_res.std_bel, 2),
+        "min_bel": round(stoch_res.min_bel, 2),
+        "max_bel": round(stoch_res.max_bel, 2),
+        "var_95": round(stoch_res.var_95, 2),
+        "var_99": round(stoch_res.var_99, 2),
+        "cvar_95": round(stoch_res.cvar_95, 2),
+        "cvar_99": round(stoch_res.cvar_99, 2),
+        "skewness": term_dist_dict["skewness"],
+    }
+
+    # Backward-compatible fan_chart_rates and liability_histogram format
     fan_chart_rates: list[dict[str, object]] = []
     for t in range(rates_paths.shape[1]):
         col = rates_paths[:, t]
@@ -388,20 +422,23 @@ async def _compute_stochastic_valuation_core(
             "mean": round(float(np.mean(col)), 5),
         })
 
-    # Empirical liability distribution histogram
-    hist_counts, bin_edges = np.histogram(bel_dist, bins=30)
     histogram_data: list[dict[str, object]] = []
-    for i in range(len(hist_counts)):
+    bin_edges = term_dist_dict["bin_edges"]
+    counts = term_dist_dict["counts"]
+    for i in range(len(counts)):
         histogram_data.append({
-            "bin_start": round(float(bin_edges[i]), 2),
-            "bin_end": round(float(bin_edges[i + 1]), 2),
+            "bin_start": bin_edges[i],
+            "bin_end": bin_edges[i + 1],
             "bin_mid": round(float((bin_edges[i] + bin_edges[i + 1]) / 2.0), 2),
-            "count": int(hist_counts[i]),
+            "count": counts[i],
         })
 
-    sample_paths = rates_paths[:10, :].round(5).tolist()
-
     return StochasticValuationResponse(
+        timesteps=timesteps,
+        quantiles=quantiles_obj,
+        terminal_distribution=term_dist_obj,
+        sample_paths=sample_paths,
+        summary_kpis=summary_kpis,
         mean_bel=round(stoch_res.mean_bel, 2),
         std_bel=round(stoch_res.std_bel, 2),
         min_bel=round(stoch_res.min_bel, 2),
@@ -413,7 +450,6 @@ async def _compute_stochastic_valuation_core(
         percentiles={k: round(v, 2) for k, v in stoch_res.percentiles.items()},
         fan_chart_rates=fan_chart_rates,
         liability_histogram=histogram_data,
-        sample_paths=sample_paths,
     )
 
 

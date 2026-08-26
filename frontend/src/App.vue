@@ -578,20 +578,40 @@ function renderReserveChart() {
 }
 
 function renderFanChart() {
-  if (!fanChartRef.value || !stochasticData.value?.fan_chart_rates) return
+  if (!fanChartRef.value || (!stochasticData.value?.quantiles && !stochasticData.value?.fan_chart_rates)) return
   if (!fanChart) fanChart = echarts.init(fanChartRef.value)
 
-  const rates = stochasticData.value.fan_chart_rates
-  const years = rates.map(d => `t=${d.year}`)
-  const p5 = rates.map(d => (d.p5 * 100).toFixed(2))
-  const p25 = rates.map(d => (d.p25 * 100).toFixed(2))
-  const p50 = rates.map(d => (d.p50 * 100).toFixed(2))
-  const p75 = rates.map(d => (d.p75 * 100).toFixed(2))
-  const p95 = rates.map(d => (d.p95 * 100).toFixed(2))
-  const mean = rates.map(d => (d.mean * 100).toFixed(2))
+  let years = []
+  let p5 = []
+  let p25 = []
+  let p50 = []
+  let p75 = []
+  let p95 = []
+  let mean = []
 
-  const sampleSeries = (stochasticData.value.sample_paths || []).slice(0, 8).map((path, idx) => ({
-    name: `Sample ${idx + 1}`,
+  if (stochasticData.value.quantiles) {
+    const q = stochasticData.value.quantiles
+    const timesteps = stochasticData.value.timesteps || q.p50.map((_, i) => i)
+    years = timesteps.map(t => `t=${t}`)
+    p5 = q.p5.map(v => (v * 100).toFixed(2))
+    p25 = q.p25.map(v => (v * 100).toFixed(2))
+    p50 = q.p50.map(v => (v * 100).toFixed(2))
+    p75 = q.p75.map(v => (v * 100).toFixed(2))
+    p95 = q.p95.map(v => (v * 100).toFixed(2))
+    mean = p50
+  } else {
+    const rates = stochasticData.value.fan_chart_rates
+    years = rates.map(d => `t=${d.year}`)
+    p5 = rates.map(d => (d.p5 * 100).toFixed(2))
+    p25 = rates.map(d => (d.p25 * 100).toFixed(2))
+    p50 = rates.map(d => (d.p50 * 100).toFixed(2))
+    p75 = rates.map(d => (d.p75 * 100).toFixed(2))
+    p95 = rates.map(d => (d.p95 * 100).toFixed(2))
+    mean = rates.map(d => (d.mean * 100).toFixed(2))
+  }
+
+  const sampleSeries = (stochasticData.value.sample_paths || []).slice(0, 10).map((path, idx) => ({
+    name: `Trace ${idx + 1}`,
     type: 'line',
     data: path.map(r => (r * 100).toFixed(2)),
     smooth: true,
@@ -603,7 +623,7 @@ function renderFanChart() {
   const option = {
     backgroundColor: 'transparent',
     tooltip: { trigger: 'axis', backgroundColor: 'rgba(11, 15, 25, 0.95)', borderColor: 'rgba(168, 85, 247, 0.3)', textStyle: { color: '#f8fafc', fontSize: 12, fontFamily: 'JetBrains Mono' } },
-    legend: { data: ['95% Upper Bound', 'Median (p50)', 'Mean Rate', '5% Lower Bound'], textStyle: { color: '#94a3b8', fontSize: 11 }, top: 0, right: 10 },
+    legend: { data: ['95% Upper Bound', 'Median (p50)', '5% Lower Bound'], textStyle: { color: '#94a3b8', fontSize: 11 }, top: 0, right: 10 },
     grid: { top: 40, left: 55, right: 25, bottom: 35 },
     xAxis: { type: 'category', data: years, boundaryGap: false, axisLine: { lineStyle: { color: '#334155' } }, axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', interval: Math.max(1, Math.floor(years.length / 8)) }, splitLine: { show: true, lineStyle: { color: 'rgba(255, 255, 255, 0.04)' } } },
     yAxis: { type: 'value', axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', formatter: v => `${v}%` }, splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } } },
@@ -612,7 +632,6 @@ function renderFanChart() {
       { name: '95% Upper Bound', type: 'line', data: p95, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#f43f5e' }, areaStyle: { color: 'rgba(244, 63, 94, 0.12)' } },
       { name: 'p75', type: 'line', data: p75, smooth: true, symbol: 'none', lineStyle: { width: 1, color: 'rgba(236, 72, 153, 0.5)' }, areaStyle: { color: 'rgba(236, 72, 153, 0.16)' } },
       { name: 'Median (p50)', type: 'line', data: p50, smooth: true, symbol: 'none', lineStyle: { width: 2.5, color: '#38bdf8', shadowColor: 'rgba(56, 189, 248, 0.6)', shadowBlur: 8 } },
-      { name: 'Mean Rate', type: 'line', data: mean, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#fbbf24', type: 'dashed' } },
       { name: 'p25', type: 'line', data: p25, smooth: true, symbol: 'none', lineStyle: { width: 1, color: 'rgba(236, 72, 153, 0.5)' } },
       { name: '5% Lower Bound', type: 'line', data: p5, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: '#a855f7' } },
     ],
@@ -647,20 +666,40 @@ function renderCashFlowChart() {
 }
 
 function renderDistChart() {
-  if (!distChartRef.value || !stochasticData.value?.liability_histogram) return
+  if (!distChartRef.value || (!stochasticData.value?.terminal_distribution && !stochasticData.value?.liability_histogram)) return
   if (!distChart) distChart = echarts.init(distChartRef.value)
 
-  const hist = stochasticData.value.liability_histogram
-  const var95 = stochasticData.value.var_95
-  const bins = hist.map(d => `$${(d.bin_mid / 1000).toFixed(1)}k`)
-  const counts = hist.map(d => ({
-    value: d.count,
-    itemStyle: {
-      color: d.bin_mid >= var95 ? '#f43f5e' : '#a855f7',
-      shadowColor: d.bin_mid >= var95 ? 'rgba(244, 63, 94, 0.4)' : 'rgba(168, 85, 247, 0.3)',
-      shadowBlur: 6,
-    },
-  }))
+  let bins = []
+  let counts = []
+  const var95 = stochasticData.value.var_95 || stochasticData.value.terminal_distribution?.var_95 || 0
+
+  if (stochasticData.value.terminal_distribution) {
+    const td = stochasticData.value.terminal_distribution
+    const binEdges = td.bin_edges
+    counts = td.counts.map((c, i) => {
+      const mid = (binEdges[i] + binEdges[i + 1]) / 2.0
+      return {
+        value: c,
+        itemStyle: {
+          color: mid >= var95 ? '#f43f5e' : '#a855f7',
+          shadowColor: mid >= var95 ? 'rgba(244, 63, 94, 0.4)' : 'rgba(168, 85, 247, 0.3)',
+          shadowBlur: 6,
+        },
+      }
+    })
+    bins = td.counts.map((_, i) => `$${((binEdges[i] + binEdges[i + 1]) / 2000.0).toFixed(1)}k`)
+  } else {
+    const hist = stochasticData.value.liability_histogram
+    bins = hist.map(d => `$${(d.bin_mid / 1000).toFixed(1)}k`)
+    counts = hist.map(d => ({
+      value: d.count,
+      itemStyle: {
+        color: d.bin_mid >= var95 ? '#f43f5e' : '#a855f7',
+        shadowColor: d.bin_mid >= var95 ? 'rgba(244, 63, 94, 0.4)' : 'rgba(168, 85, 247, 0.3)',
+        shadowBlur: 6,
+      },
+    }))
+  }
 
   const option = {
     backgroundColor: 'transparent',

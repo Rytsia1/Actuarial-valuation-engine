@@ -5,7 +5,7 @@ Pydantic Request and Response schemas for the Actuarial Valuation API.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Optional, Union
 from pydantic import BaseModel, Field
 
 from actuary_engine.models.assumptions import ExpenseAssumption, LapseAssumption
@@ -120,21 +120,51 @@ class StochasticValuationRequest(BaseModel):
     seed: Optional[int] = Field(default=42, description="Random seed for reproducibility.")
 
 
-class StochasticValuationResponse(BaseModel):
-    """Response schema for stochastic Monte Carlo valuation and fan chart data."""
+class QuantileTrajectory(BaseModel):
+    """Percentile bands at each timestep across stochastic paths."""
 
-    mean_bel: float
-    std_bel: float
-    min_bel: float
-    max_bel: float
-    var_95: float
-    var_99: float
-    cvar_95: float
-    cvar_99: float
-    percentiles: dict[str, float]
-    fan_chart_rates: list[dict[str, Any]]
-    liability_histogram: list[dict[str, Any]]
-    sample_paths: list[list[float]]
+    p5: list[float] = Field(..., description="5th percentile trajectory (lower bound).")
+    p25: list[float] = Field(..., description="25th percentile trajectory (lower quartile).")
+    p50: list[float] = Field(..., description="50th percentile trajectory (median).")
+    p75: list[float] = Field(..., description="75th percentile trajectory (upper quartile).")
+    p95: list[float] = Field(..., description="95th percentile trajectory (upper bound).")
+
+
+class TerminalDistribution(BaseModel):
+    """Statistical distribution, moments, and binned histogram of terminal liabilities."""
+
+    bin_edges: list[float] = Field(..., description="Histogram bin boundary values.")
+    counts: list[int] = Field(..., description="Sample count in each histogram bin.")
+    mean: float = Field(..., description="Expected mean terminal value.")
+    std: float = Field(..., description="Standard deviation.")
+    skewness: float = Field(..., description="Third standardized moment (skewness).")
+    var_95: float = Field(..., description="Value at Risk at 95% confidence level.")
+    cvar_95: float = Field(..., description="Conditional Value at Risk (CTE 95).")
+    var_99: float = Field(..., description="Value at Risk at 99% confidence level.")
+    cvar_99: float = Field(..., description="Conditional Value at Risk (CTE 99).")
+
+
+class StochasticValuationResponse(BaseModel):
+    """Response schema for compressed server-side stochastic Monte Carlo outputs."""
+
+    timesteps: list[Union[int, str]] = Field(default_factory=list, description="Time projection grid.")
+    quantiles: QuantileTrajectory = Field(..., description="Server-aggregated cross-sectional quantile bands.")
+    terminal_distribution: TerminalDistribution = Field(..., description="Terminal liability distribution and histogram bins.")
+    sample_paths: list[list[float]] = Field(default_factory=list, description="Representative path subset (max 15 traces).")
+    summary_kpis: dict[str, float] = Field(default_factory=dict, description="Key summary risk metrics.")
+
+    # Convenience / backward-compatible properties
+    mean_bel: float = Field(..., description="Mean Best Estimate Liability.")
+    std_bel: float = Field(..., description="Standard deviation of liability.")
+    min_bel: float = Field(..., description="Minimum scenario BEL.")
+    max_bel: float = Field(..., description="Maximum scenario BEL.")
+    var_95: float = Field(..., description="Value at Risk (95% percentile).")
+    var_99: float = Field(..., description="Value at Risk (99% percentile).")
+    cvar_95: float = Field(..., description="Conditional Value at Risk (95%).")
+    cvar_99: float = Field(..., description="Conditional Value at Risk (99%).")
+    percentiles: dict[str, float] = Field(default_factory=dict, description="Quantiles mapping.")
+    fan_chart_rates: list[dict[str, Any]] = Field(default_factory=list, description="Fan chart rate objects.")
+    liability_histogram: list[dict[str, Any]] = Field(default_factory=list, description="Histogram bin objects.")
 
 
 class AsyncJobCreateResponse(BaseModel):
