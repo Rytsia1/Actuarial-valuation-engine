@@ -199,13 +199,34 @@ $$w(r_t) = w_{\min} + \frac{w_{\max} - w_{\min}}{1 + \exp\left(-\gamma \cdot (r_
 - **Value at Risk (VaR):** $\text{VaR}_\alpha = \inf \{ x \in \mathbb{R} : P(\text{BEL} \le x) \ge \alpha \}$
 - **Conditional Value at Risk (CVaR / Expected Shortfall):** $\text{CVaR}_\alpha = \mathbb{E}[\text{BEL} \mid \text{BEL} \ge \text{VaR}_\alpha]$
 
+---
+
+### Launching the Web Application (FastAPI + Vue 3)
+
+#### 1. Start the FastAPI Backend Server
+```powershell
+.\.venv\Scripts\uvicorn.exe actuary_engine.api.main:app --reload --port 8000
+```
+API Documentation will be live at `http://127.0.0.1:8000/docs`.
+
+#### 2. Start the Vue 3 Frontend Dev Server
+In a separate terminal:
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Open your browser at `http://localhost:5173` to access the interactive Actuarial Valuation Dashboard.
+
+---
+
 ## Roadmap
 
 - [x] **Level 1–2:** Life tables, commutation functions, pricing, annual level premiums
 - [x] **Level 3:** Prospective/retrospective reserves, Fackler recurrence, GPV/BEL, expense loading, lapse modeling
 - [x] **Level 4:** ESG (Vasicek), dynamic lapse S-curve, Monte Carlo valuation, tail risk (VaR/CVaR)
-- [ ] **API Layer:** FastAPI endpoints for all calculation & valuation pipelines
-- [ ] **Frontend:** Vue 3 + Plotly dashboards (interactive reserve profiles, sensitivity tornadoes, fan charts)
+- [x] **API Layer:** FastAPI endpoints (`/api/v1/valuation/deterministic` & `/api/v1/valuation/stochastic`)
+- [x] **Frontend:** Vue 3 + TailwindCSS + Apache ECharts dashboard (interactive reserve profiles, Vasicek fan chart, tail loss histogram, cohort rollouts)
 
 ## License
 
