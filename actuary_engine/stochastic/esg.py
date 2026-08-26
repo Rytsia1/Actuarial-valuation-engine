@@ -26,6 +26,8 @@ from typing import Optional
 import numpy as np
 from pydantic import BaseModel, Field, model_validator
 
+from actuary_engine.stochastic._kernels import _simulate_vasicek_kernel
+
 
 class VasicekParams(BaseModel):
     """Parameters for the Vasicek one-factor short-rate model.
@@ -145,12 +147,17 @@ class VasicekESG:
             z = np.zeros((n_scenarios, n_steps), dtype=np.float64)
 
         if method == "euler":
-            # Euler-Maruyama discretization
-            sqrt_dt = np.sqrt(dt)
-            for t in range(n_steps):
-                r_t = paths[:, t]
-                dr = kappa * (theta - r_t) * dt + sigma * sqrt_dt * z[:, t]
-                paths[:, t + 1] = r_t + dr
+            # JIT-compiled Euler-Maruyama propagation kernel
+            paths = _simulate_vasicek_kernel(
+                r0=self.params.r0,
+                kappa=kappa,
+                theta=theta,
+                sigma=sigma,
+                dt=dt,
+                n_steps=n_steps,
+                n_scenarios=n_scenarios,
+                random_shocks=z,
+            )
 
         elif method == "exact":
             # Exact Gaussian solution of the SDE over interval dt

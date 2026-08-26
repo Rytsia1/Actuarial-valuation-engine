@@ -39,6 +39,7 @@ from actuary_engine.models.assumptions import (
 )
 from actuary_engine.models.contracts import PolicyContract, ProductType
 from actuary_engine.tables.mortality_table import MortalityTable
+from actuary_engine.valuation._kernels import _rollback_gpv_kernel
 
 
 class GrossPremiumValuation:
@@ -348,6 +349,59 @@ class GrossPremiumValuation:
             "duration": durations,
             "age": ages,
             "gross_reserve": gross_reserves,
+        })
+
+    def rollback_reserve_profile(
+        self,
+        contract: PolicyContract,
+        gross_premium: float,
+        surrender_values: Optional[np.ndarray] = None,
+    ) -> pd.DataFrame:
+        """Compute gross premium reserve trajectory using JIT-compiled backward induction.
+
+        Uses ``_rollback_gpv_kernel`` to eliminate Python loop overhead via C-speed JIT execution.
+
+        Args:
+            contract: Policy contract.
+            gross_premium: Annual gross premium.
+            surrender_values: Optional surrender value schedule.
+
+        Returns:
+            DataFrame with columns: duration, age, gross_reserve.
+        """
+        df = self.project(contract, gross_premium, surrender_values)
+        v = self.interest.discount_factor
+        n = len(df)
+
+        death_claims = df["death_claims"].to_numpy(dtype=np.float64)
+        lapse_payouts = df["lapse_payouts"].to_numpy(dtype=np.float64)
+        maturity_benefit = df["maturity_benefit"].to_numpy(dtype=np.float64)
+        total_expense = df["total_expense"].to_numpy(dtype=np.float64)
+        premium_income = df["premium_income"].to_numpy(dtype=np.float64)
+        qx_dep = df["qx_dependent"].to_numpy(dtype=np.float64)
+        wx_dep = df["wx_dependent"].to_numpy(dtype=np.float64)
+
+        # JIT kernel rollback backward induction
+        reserves = _rollback_gpv_kernel(
+            death_claims=death_claims,
+            lapse_payouts=lapse_payouts,
+            maturity_benefits=maturity_benefit,
+            expenses=total_expense,
+            premiums=premium_income,
+            qx_dep=qx_dep,
+            wx_dep=wx_dep,
+            discount_v=v,
+            max_t=n,
+        )
+
+        x = contract.issue_age
+        durations = np.arange(n + 1, dtype=np.int64)
+        ages = x + durations
+
+        return pd.DataFrame({
+            "duration": durations,
+            "age": ages,
+            "gross_reserve": reserves,
         })
 
     def __repr__(self) -> str:

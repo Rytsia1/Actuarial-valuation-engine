@@ -15,6 +15,7 @@ import numpy as np
 from pydantic import BaseModel, Field
 
 from actuary_engine.curves.yield_curve import MarketYieldCurve
+from actuary_engine.stochastic._kernels import _simulate_cir_kernel
 
 
 class HullWhiteParams(BaseModel):
@@ -267,15 +268,17 @@ class CIRModel:
         rates = np.empty((n_scenarios, n_steps + 1), dtype=np.float64)
         rates[:, 0] = self.r0
 
-        sqrt_dt = math.sqrt(dt)
         shocks = rng.normal(0.0, 1.0, size=(n_scenarios, n_steps))
-
-        for k in range(n_steps):
-            r_curr = np.maximum(0.0, rates[:, k])
-            dr = self.kappa * (self.theta - r_curr) * dt + self.sigma * np.sqrt(r_curr) * sqrt_dt * shocks[:, k]
-            rates[:, k + 1] = np.maximum(0.0, r_curr + dr)
-
-        return rates
+        return _simulate_cir_kernel(
+            r0=self.r0,
+            kappa=self.kappa,
+            theta=self.theta,
+            sigma=self.sigma,
+            dt=dt,
+            n_steps=n_steps,
+            n_scenarios=n_scenarios,
+            random_shocks=shocks,
+        )
 
     def analytical_zero_price(self, T: float) -> float:
         """Compute analytical zero-coupon bond price P(0, T) under CIR."""
