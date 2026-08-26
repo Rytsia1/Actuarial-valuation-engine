@@ -4,9 +4,12 @@ import * as echarts from 'echarts'
 import {
   checkHealth,
   runDeterministicValuation,
+  startAsyncStochasticValuation,
+  getStochasticJobStatus,
   runStochasticValuation,
   ActuaryApiError,
 } from './services/actuaryApi'
+import { connectSimulationSocket } from './services/simulationSocket'
 
 // ────────────────────────────────────────────────────────────
 // Reactive Dashboard State
@@ -17,6 +20,14 @@ const backendStatus = ref('checking') // 'healthy', 'error', 'checking'
 const loading = ref(false)
 const errorMessage = ref(null)
 const backendDetails = ref(null)
+
+// Simulation Progress Tracking
+const isSimulating = ref(false)
+const simProgress = ref(0)
+const completedPaths = ref(0)
+const totalPaths = ref(0)
+const partialMetrics = ref(null)
+let activeSocketConnection = null
 
 // Form Parameters with standard actuarial defaults
 const form = reactive({
@@ -52,7 +63,7 @@ const form = reactive({
     sensitivity: 25.0,
     spread_threshold: 0.0,
   },
-  n_scenarios: 2500,
+  n_scenarios: 5000,
   seed: 42,
 })
 
@@ -124,20 +135,20 @@ function applyPreset(type) {
     form.interest_rate = 0.05
     form.vasicek.sigma = 0.012
     form.enable_dynamic_lapse = false
-  } else if (type === 'high_volatility') {
+  } else if (type === 'large_scale_10k') {
     form.product_type = 'endowment'
-    form.issue_age = 25
+    form.issue_age = 30
     form.term = 20
     form.sum_assured = 1000000
-    form.vasicek.sigma = 0.035
-    form.vasicek.kappa = 0.35
+    form.n_scenarios = 10000
+    form.vasicek.sigma = 0.02
     form.enable_dynamic_lapse = true
   }
   executeValuation()
 }
 
 // ────────────────────────────────────────────────────────────
-// API Communication & Valuation Orchestrator
+// API Communication & Valuation Orchestrator (Async + WebSockets)
 // ────────────────────────────────────────────────────────────
 
 async function checkBackendConnection() {
@@ -157,8 +168,19 @@ async function executeValuation() {
   loading.value = true
   errorMessage.value = null
 
+  if (activeSocketConnection) {
+    activeSocketConnection.close()
+    activeSocketConnection = null
+  }
+
+  isSimulating.value = true
+  simProgress.value = 0
+  completedPaths.value = 0
+  totalPaths.value = form.n_scenarios
+  partialMetrics.value = null
+
   try {
-    // 1. Prepare deterministic payload adhering to FastAPI schema
+    // 1. Prepare deterministic payload
     const detPayload = {
       product_type: form.product_type,
       issue_age: form.issue_age,
@@ -171,7 +193,7 @@ async function executeValuation() {
       lapse: form.lapse,
     }
 
-    // 2. Prepare stochastic payload adhering to FastAPI schema
+    // 2. Prepare stochastic payload
     const stochPayload = {
       product_type: form.product_type,
       issue_age: form.issue_age,
@@ -186,11 +208,71 @@ async function executeValuation() {
       seed: form.seed,
     }
 
-    // Execute parallel requests to the FastAPI valuation backend
-    const [detRes, stochRes] = await Promise.all([
-      runDeterministicValuation(detPayload),
-      runStochasticValuation(stochPayload),
-    ])
+    // Launch deterministic computation
+    const detPromise = runDeterministicValuation(detPayload)
+
+    // Launch asynchronous stochastic computation with WebSocket streaming
+    const asyncJobPromise = new Promise(async (resolve, reject) => {
+      try {
+        const jobRes = await startAsyncStochasticValuation(stochPayload)
+        const jobId = jobRes.job_id
+
+        // Establish real-time WebSocket connection
+        activeSocketConnection = connectSimulationSocket(jobId, {
+          onProgress: (prog) => {
+            simProgress.value = prog.percent
+            completedPaths.value = prog.completed_paths
+            totalPaths.value = prog.total_paths
+            if (prog.partial_metrics) {
+              partialMetrics.value = prog.partial_metrics
+            }
+          },
+          onComplete: (data) => {
+            simProgress.value = 100
+            completedPaths.value = totalPaths.value
+            isSimulating.value = false
+            resolve(data)
+          },
+          onError: async (err) => {
+            console.warn('WebSocket error, falling back to HTTP polling:', err)
+            // Polling fallback loop
+            try {
+              let attempts = 0
+              while (attempts < 60) {
+                await new Promise(r => setTimeout(r, 250))
+                const statusRes = await getStochasticJobStatus(jobId)
+                simProgress.value = statusRes.progress
+                completedPaths.value = statusRes.completed_paths
+                if (statusRes.status === 'COMPLETED' && statusRes.result) {
+                  isSimulating.value = false
+                  resolve(statusRes.result)
+                  return
+                } else if (statusRes.status === 'FAILED') {
+                  throw new Error(statusRes.error || 'Async simulation failed')
+                }
+                attempts++
+              }
+              throw new Error('Simulation polling timed out')
+            } catch (pollErr) {
+              reject(pollErr)
+            }
+          },
+        })
+      } catch (err) {
+        // Fallback to synchronous endpoint if async dispatch fails
+        try {
+          const syncRes = await runStochasticValuation(stochPayload)
+          simProgress.value = 100
+          completedPaths.value = form.n_scenarios
+          isSimulating.value = false
+          resolve(syncRes)
+        } catch (syncErr) {
+          reject(syncErr)
+        }
+      }
+    })
+
+    const [detRes, stochRes] = await Promise.all([detPromise, asyncJobPromise])
 
     deterministicData.value = detRes
     stochasticData.value = stochRes
@@ -208,6 +290,7 @@ async function executeValuation() {
     }
   } finally {
     loading.value = false
+    isSimulating.value = false
   }
 }
 
@@ -660,6 +743,10 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  if (activeSocketConnection) {
+    activeSocketConnection.close()
+    activeSocketConnection = null
+  }
   if (resizeObserver) resizeObserver.disconnect()
   heroChart?.dispose()
   reserveChart?.dispose()
@@ -748,7 +835,7 @@ onUnmounted(() => {
               <svg :class="['h-3.5 w-3.5 text-rose-400', loading ? 'animate-spin' : '']" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
               </svg>
-              <span>{{ loading ? 'Computing...' : 'Recalculate' }}</span>
+              <span>{{ loading ? 'Simulating...' : 'Recalculate' }}</span>
             </span>
           </button>
         </div>
@@ -756,7 +843,7 @@ onUnmounted(() => {
     </header>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 2. Error Notification Banner (if FastAPI is offline or returns error) -->
+    <!-- 2. Error Notification Banner (if FastAPI is offline) -->
     <!-- ──────────────────────────────────────────────────────────── -->
     <div v-if="errorMessage || backendStatus === 'error'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4 relative z-20">
       <div class="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-200 text-xs font-mono flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg shadow-rose-500/10">
@@ -782,13 +869,48 @@ onUnmounted(() => {
     </div>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 3. Hero Headline Section & Feature Badges -->
+    <!-- 3. Real-Time WebSocket Simulation Progress Bar -->
     <!-- ──────────────────────────────────────────────────────────── -->
-    <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-4 text-center relative z-10">
+    <div v-if="isSimulating" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4 relative z-20">
+      <div class="neon-glass rounded-2xl p-4 border border-fuchsia-500/30 shadow-lg shadow-fuchsia-500/10 space-y-2">
+        <div class="flex items-center justify-between text-xs font-mono">
+          <div class="flex items-center space-x-2">
+            <span class="h-2.5 w-2.5 rounded-full bg-fuchsia-400 animate-ping"></span>
+            <span class="font-bold text-white tracking-wide">
+              Streaming Vectorized Monte Carlo Simulation
+            </span>
+            <span class="text-fuchsia-400 text-[11px]">
+              ({{ completedPaths.toLocaleString() }} / {{ totalPaths.toLocaleString() }} paths)
+            </span>
+          </div>
+          <div class="flex items-center space-x-3">
+            <span v-if="partialMetrics" class="text-slate-400 text-[11px]">
+              Interim Mean BEL: <strong class="text-emerald-400 font-mono">{{ formatCurrency(partialMetrics.mean_bel) }}</strong>
+            </span>
+            <span class="font-bold text-fuchsia-300 font-mono text-sm">
+              {{ simProgress.toFixed(0) }}%
+            </span>
+          </div>
+        </div>
+
+        <!-- Progress Track -->
+        <div class="w-full bg-slate-900/80 rounded-full h-2.5 overflow-hidden border border-white/[0.08]">
+          <div
+            class="h-full bg-gradient-to-r from-fuchsia-500 via-rose-500 to-amber-400 rounded-full transition-all duration-150 shadow-[0_0_12px_rgba(236,72,153,0.6)]"
+            :style="{ width: `${simProgress}%` }"
+          ></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ──────────────────────────────────────────────────────────── -->
+    <!-- 4. Hero Headline Section & Feature Badges -->
+    <!-- ──────────────────────────────────────────────────────────── -->
+    <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-4 text-center relative z-10">
       <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-white/[0.04] border border-fuchsia-500/20 backdrop-blur-xl mb-4 shadow-[0_0_20px_rgba(236,72,153,0.15)]">
         <span class="h-1.5 w-1.5 rounded-full bg-fuchsia-400 animate-pulse"></span>
-        <span class="text-xs font-medium text-slate-300">FastAPI RESTful Valuation Backend</span>
-        <span class="text-[10px] text-fuchsia-400 font-mono">⚡ 163 Unit Tests Verified</span>
+        <span class="text-xs font-medium text-slate-300">FastAPI Asynchronous Pipeline & WebSocket Streaming</span>
+        <span class="text-[10px] text-fuchsia-400 font-mono">⚡ Vectorized Chunks</span>
       </div>
 
       <h1 class="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight text-white max-w-4xl mx-auto leading-tight">
@@ -820,16 +942,16 @@ onUnmounted(() => {
           ♾️ Whole Life ($500k)
         </button>
         <button
-          @click="applyPreset('high_volatility')"
-          class="px-3 py-1 rounded-lg text-xs font-mono font-medium bg-white/[0.04] hover:bg-amber-500/20 border border-white/[0.08] hover:border-amber-500/40 text-slate-300 transition"
+          @click="applyPreset('large_scale_10k')"
+          class="px-3 py-1 rounded-lg text-xs font-mono font-medium bg-white/[0.04] hover:bg-amber-500/20 border border-white/[0.08] hover:border-amber-500/40 text-amber-300 transition"
         >
-          🔥 High Volatility Stress
+          🚀 10,000 Paths WebSocket
         </button>
       </div>
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 4. Hero Visualizer Card (Showcase Bar Chart) -->
+    <!-- 5. Hero Visualizer Card (Showcase Bar Chart) -->
     <!-- ──────────────────────────────────────────────────────────── -->
     <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 relative z-10">
       <div class="neon-border-gradient shadow-2xl">
@@ -854,7 +976,7 @@ onUnmounted(() => {
           <div class="bg-black/40 rounded-xl p-5 border border-white/[0.06] space-y-4 font-mono text-xs">
             <div class="text-[11px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-800 pb-2 flex items-center justify-between">
               <span>Valuation Summary</span>
-              <span class="text-fuchsia-400">FastAPI Powered</span>
+              <span class="text-fuchsia-400">FastAPI WebSocket</span>
             </div>
 
             <div class="space-y-3">
@@ -898,7 +1020,7 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 5. Top KPI Metric Cards Strip -->
+    <!-- 6. Top KPI Metric Cards Strip -->
     <!-- ──────────────────────────────────────────────────────────── -->
     <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 relative z-10">
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -957,7 +1079,7 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 6. Main Workspace Layout (Sidebar Controls + Multi-Chart Workspace) -->
+    <!-- 7. Main Workspace Layout (Sidebar Controls + Multi-Chart Workspace) -->
     <!-- ──────────────────────────────────────────────────────────── -->
     <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 relative z-10">
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -968,7 +1090,7 @@ onUnmounted(() => {
               <h2 class="text-xs font-bold font-mono uppercase tracking-wider text-fuchsia-400 flex items-center space-x-2">
                 <span>⚙️ Contract & ESG Controls</span>
               </h2>
-              <span class="text-[10px] font-mono text-slate-400">FastAPI Reactive</span>
+              <span class="text-[10px] font-mono text-slate-400">WebSocket Ready</span>
             </div>
 
             <!-- Product Contract -->
@@ -1093,6 +1215,8 @@ onUnmounted(() => {
                     <option :value="1000">1,000</option>
                     <option :value="2500">2,500</option>
                     <option :value="5000">5,000</option>
+                    <option :value="10000">10,000 (Async Stream)</option>
+                    <option :value="25000">25,000 (Large Scale)</option>
                   </select>
                 </div>
               </div>
@@ -1122,7 +1246,7 @@ onUnmounted(() => {
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
               </svg>
-              <span>{{ loading ? 'Calculating via FastAPI...' : 'Run Valuation API' }}</span>
+              <span>{{ loading ? `Streaming Paths (${simProgress.toFixed(0)}%)...` : 'Run Valuation Engine' }}</span>
             </button>
           </div>
         </div>
@@ -1256,7 +1380,7 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 7. Footer -->
+    <!-- 8. Footer -->
     <!-- ──────────────────────────────────────────────────────────── -->
     <footer class="border-t border-white/[0.08] bg-[#030712] py-6 mt-12 relative z-10">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between text-xs font-mono text-slate-500 gap-2">
@@ -1265,7 +1389,7 @@ onUnmounted(() => {
           <span>•</span>
           <span>SOA Illustrative Life Table (ω=110)</span>
           <span>•</span>
-          <span>FastAPI REST API</span>
+          <span>FastAPI WebSockets Streaming</span>
         </div>
         <div>FastAPI • Vue 3 • Apache ECharts • TailwindCSS</div>
       </div>

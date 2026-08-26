@@ -104,3 +104,26 @@ class StochasticValuationResponse(BaseModel):
     fan_chart_rates: list[dict[str, Any]]
     liability_histogram: list[dict[str, Any]]
     sample_paths: list[list[float]]
+
+
+class AsyncJobCreateResponse(BaseModel):
+    """Response returned upon enqueuing an asynchronous simulation task."""
+
+    job_id: str = Field(..., description="Unique simulation job identifier.")
+    status: str = Field(default="QUEUED", description="Initial job status.")
+    total_paths: int = Field(..., description="Target number of Monte Carlo paths.")
+    ws_endpoint: str = Field(..., description="WebSocket URI for streaming progress.")
+
+
+class AsyncJobStatusResponse(BaseModel):
+    """Polling response schema for job status."""
+
+    job_id: str
+    status: str
+    progress: float
+    completed_paths: int
+    total_paths: int
+    partial_metrics: Optional[dict[str, Any]] = None
+    result: Optional[StochasticValuationResponse] = None
+    error: Optional[str] = None
+

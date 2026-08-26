@@ -6,7 +6,8 @@ Provides:
   and tail-risk measures (CVaR / Expected Shortfall).
 - ``StochasticValuationEngine``: High-performance vectorized Monte Carlo engine
   coupling the Vasicek Economic Scenario Generator, dynamic policyholder lapse
-  behavior, and mortality tables.
+  behavior, and mortality tables. Supports batch/chunked vectorized execution with
+  real-time progress callbacks for asynchronous WebSockets.
 
 Mathematical Risk Measures:
     VaR_α (Value at Risk):
@@ -18,7 +19,9 @@ Mathematical Risk Measures:
 
 from __future__ import annotations
 
-from typing import Optional
+import asyncio
+from collections.abc import Callable, Coroutine
+from typing import Any, Optional
 
 import numpy as np
 import pandas as pd
@@ -102,6 +105,7 @@ class StochasticValuationEngine:
     3. Dynamic interest-rate-sensitive policyholder lapses.
     4. Expense cash flows (acquisition, maintenance, per-policy).
     5. Quantitative tail risk metrics (VaR & CVaR).
+    6. Chunked execution with real-time asynchronous progress hooks.
 
     Attributes:
         table: Mortality table.
@@ -136,70 +140,45 @@ class StochasticValuationEngine:
         self.dynamic_lapse = dynamic_lapse
         self.base_lapse = base_lapse
 
-    def run_simulation(
+    def _simulate_batch(
         self,
         contract: PolicyContract,
         gross_premium: float,
-        n_scenarios: int = 2000,
+        n_batch: int,
         seed: Optional[int] = None,
         surrender_values: Optional[np.ndarray] = None,
         dt: float = 1.0,
         compounding: str = "continuous",
-    ) -> RiskMetricsResult:
-        """Run path-dependent Monte Carlo simulation of policy liabilities.
-
-        Simulates n_scenarios paths over the contract coverage term, computes
-        the present value of net liabilities along each path, and returns
-        aggregated risk metrics.
-
-        Args:
-            contract: Policy contract specification.
-            gross_premium: Annual gross premium paid by policyholder.
-            n_scenarios: Number of Monte Carlo scenario paths (default 2000).
-            seed: Optional random seed for reproducible runs.
-            surrender_values: Optional 1D array of cash surrender values by duration.
-            dt: Time step size in years (default 1.0 for annual).
-            compounding: Discount compounding model ('continuous' or 'discrete').
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Vectorized execution of a single batch of Monte Carlo paths.
 
         Returns:
-            RiskMetricsResult containing distribution statistics and scenario array.
+            Tuple of (scenario_bel_array of shape (n_batch,), short_rates_matrix of shape (n_batch, n+1))
         """
-        if n_scenarios <= 0:
-            raise ValueError(f"n_scenarios must be positive. Got {n_scenarios}.")
-
         x = contract.issue_age
         face = contract.sum_assured
         ptype = contract.product_type
-
-        # Projection horizon (years)
         n = contract.term if contract.term is not None else (self.table.omega - x)
         h = contract.effective_premium_term if contract.effective_premium_term is not None else n
 
-        # ────────────────────────────────────────────────────────
-        # 1. Simulate Economic Scenarios & Discount Factors
-        # ────────────────────────────────────────────────────────
-        # Shape: (n_scenarios, n + 1)
+        # 1. Economic Scenarios & Discount Factors
         short_rates = self.esg.simulate_paths(
-            n_scenarios=n_scenarios,
+            n_scenarios=n_batch,
             n_years=n,
             dt=dt,
             method="exact",
             seed=seed,
         )
 
-        # Stochastic discount factor matrix: (n_scenarios, n + 1)
         discount_matrix = self.esg.compute_discount_factors(
             short_rates, dt=dt, compounding=compounding
         )
-        disc_boy = discount_matrix[:, :n]      # Beginning of year (t=0..n-1)
-        disc_eoy = discount_matrix[:, 1:n + 1]  # End of year (t=1..n)
+        disc_boy = discount_matrix[:, :n]
+        disc_eoy = discount_matrix[:, 1:n + 1]
 
-        # ────────────────────────────────────────────────────────
-        # 2. Dynamic / Static Decrements (Lapse & Mortality)
-        # ────────────────────────────────────────────────────────
+        # 2. Decrements
         years = np.arange(n, dtype=np.int64)
 
-        # Independent lapse rates matrix: (n_scenarios, n)
         if self.dynamic_lapse is not None:
             market_rates_during = short_rates[:, :n]
             if self.base_lapse is not None:
@@ -209,60 +188,47 @@ class StochasticValuationEngine:
                 w_indep = self.dynamic_lapse.compute_lapse_rates(market_rates_during)
         elif self.base_lapse is not None:
             base_vec = np.array([self.base_lapse.get_rate(int(t) + 1) for t in years])
-            w_indep = np.broadcast_to(base_vec, (n_scenarios, n))
+            w_indep = np.broadcast_to(base_vec, (n_batch, n))
         else:
-            w_indep = np.zeros((n_scenarios, n), dtype=np.float64)
+            w_indep = np.zeros((n_batch, n), dtype=np.float64)
 
-        # Independent mortality rates: (n,) broadcast to (n_scenarios, n)
         x_idx = x - self.table.min_age
         q_indep_vec = self.table.qx[x_idx: x_idx + n]
-        q_indep = np.broadcast_to(q_indep_vec, (n_scenarios, n))
+        q_indep = np.broadcast_to(q_indep_vec, (n_batch, n))
 
-        # Dependent rates via UDD double-decrement formulation
         q_dep = q_indep * (1.0 - w_indep / 2.0)
         w_dep = w_indep * (1.0 - q_indep / 2.0)
         p_survival_step = np.clip(1.0 - q_dep - w_dep, 0.0, 1.0)
 
-        # In-force cohort matrix rollout: (n_scenarios, n)
-        # inforce[:, 0] = 1.0; inforce[:, t] = inforce[:, t-1] * p_survival_step[:, t-1]
-        inforce = np.empty((n_scenarios, n), dtype=np.float64)
+        inforce = np.empty((n_batch, n), dtype=np.float64)
         inforce[:, 0] = 1.0
         if n > 1:
             inforce[:, 1:] = np.cumprod(p_survival_step[:, :-1], axis=1)
 
-        # ────────────────────────────────────────────────────────
-        # 3. Cash Flow Components (Vectorized across scenarios)
-        # ────────────────────────────────────────────────────────
-
-        # Premium income (BOY)
+        # 3. Cash Flow Components
         prem_mask = (years < h).astype(np.float64)
-        prem_income = gross_premium * inforce * prem_mask  # (n_scenarios, n)
+        prem_income = gross_premium * inforce * prem_mask
 
-        # Death claims (EOY)
         if ptype == ProductType.PURE_ENDOWMENT:
-            death_claims = np.zeros((n_scenarios, n), dtype=np.float64)
+            death_claims = np.zeros((n_batch, n), dtype=np.float64)
         else:
-            death_claims = face * inforce * q_dep  # (n_scenarios, n)
+            death_claims = face * inforce * q_dep
 
-        # Surrender / Lapse payouts (EOY)
         if surrender_values is not None:
             cv = np.asarray(surrender_values, dtype=np.float64)
             if len(cv) < n:
                 cv = np.pad(cv, (0, n - len(cv)), constant_values=0.0)
-            cv_mat = np.broadcast_to(cv[:n], (n_scenarios, n))
+            cv_mat = np.broadcast_to(cv[:n], (n_batch, n))
             lapse_payouts = cv_mat * inforce * w_dep
         else:
-            lapse_payouts = np.zeros((n_scenarios, n), dtype=np.float64)
+            lapse_payouts = np.zeros((n_batch, n), dtype=np.float64)
 
-        # Maturity benefit (EOY of last year)
         if ptype in (ProductType.ENDOWMENT, ProductType.PURE_ENDOWMENT):
-            # Survivors at end of term: inforce at year n-1 * survival in year n-1
             survivors_at_mat = inforce[:, -1] * p_survival_step[:, -1]
-            maturity_payout = face * survivors_at_mat  # (n_scenarios,)
+            maturity_payout = face * survivors_at_mat
         else:
-            maturity_payout = np.zeros(n_scenarios, dtype=np.float64)
+            maturity_payout = np.zeros(n_batch, dtype=np.float64)
 
-        # Expenses (BOY)
         exp = self.expense
         pct_rate = np.where(
             years == 0,
@@ -279,33 +245,27 @@ class StochasticValuationEngine:
         per_pol_exp = inforce * per_pol_rate
         total_exp = pct_exp + per_pol_exp
 
-        # ────────────────────────────────────────────────────────
-        # 4. Stochastic Discounted Cash Flows & Scenario BEL
-        # ────────────────────────────────────────────────────────
-
+        # 4. Present Value Net Liabilities
         pv_prem = np.sum(prem_income * disc_boy, axis=1)
         pv_death = np.sum(death_claims * disc_eoy, axis=1)
         pv_lapse = np.sum(lapse_payouts * disc_eoy, axis=1)
         pv_exp = np.sum(total_exp * disc_boy, axis=1)
         pv_maturity = maturity_payout * disc_eoy[:, -1]
 
-        # Scenario Best Estimate Liability = PV(outgo) - PV(income)
         scenario_bel = pv_death + pv_lapse + pv_maturity + pv_exp - pv_prem
+        return scenario_bel, short_rates
 
-        # ────────────────────────────────────────────────────────
-        # 5. Risk Statistics & Quantiles
-        # ────────────────────────────────────────────────────────
-
+    def _aggregate_metrics(self, scenario_bel: np.ndarray) -> RiskMetricsResult:
+        """Compute summary statistics, VaR, and CVaR from an array of scenario BELs."""
+        n_scenarios = len(scenario_bel)
         mean_bel = float(np.mean(scenario_bel))
         std_bel = float(np.std(scenario_bel, ddof=1)) if n_scenarios > 1 else 0.0
         min_bel = float(np.min(scenario_bel))
         max_bel = float(np.max(scenario_bel))
 
-        # Quantile calculations
         var_95 = float(np.percentile(scenario_bel, 95.0))
         var_99 = float(np.percentile(scenario_bel, 99.0))
 
-        # Conditional Value at Risk (Expected Shortfall / CTE)
         tail_95 = scenario_bel[scenario_bel >= var_95]
         cvar_95 = float(np.mean(tail_95)) if len(tail_95) > 0 else var_95
 
@@ -333,6 +293,124 @@ class StochasticValuationEngine:
             percentiles=percentiles_dict,
             scenario_bel=scenario_bel,
         )
+
+    def run_simulation(
+        self,
+        contract: PolicyContract,
+        gross_premium: float,
+        n_scenarios: int = 2000,
+        seed: Optional[int] = None,
+        surrender_values: Optional[np.ndarray] = None,
+        dt: float = 1.0,
+        compounding: str = "continuous",
+    ) -> RiskMetricsResult:
+        """Run path-dependent Monte Carlo simulation of policy liabilities.
+
+        Args:
+            contract: Policy contract specification.
+            gross_premium: Annual gross premium paid by policyholder.
+            n_scenarios: Number of Monte Carlo scenario paths (default 2000).
+            seed: Optional random seed for reproducible runs.
+            surrender_values: Optional 1D array of cash surrender values by duration.
+            dt: Time step size in years (default 1.0 for annual).
+            compounding: Discount compounding model ('continuous' or 'discrete').
+
+        Returns:
+            RiskMetricsResult containing distribution statistics and scenario array.
+        """
+        if n_scenarios <= 0:
+            raise ValueError(f"n_scenarios must be positive. Got {n_scenarios}.")
+
+        scenario_bel, _ = self._simulate_batch(
+            contract=contract,
+            gross_premium=gross_premium,
+            n_batch=n_scenarios,
+            seed=seed,
+            surrender_values=surrender_values,
+            dt=dt,
+            compounding=compounding,
+        )
+
+        return self._aggregate_metrics(scenario_bel)
+
+    async def evaluate_liability_distribution(
+        self,
+        contract: PolicyContract,
+        gross_premium: float,
+        n_scenarios: int = 10000,
+        chunk_size: int = 1000,
+        seed: Optional[int] = None,
+        surrender_values: Optional[np.ndarray] = None,
+        dt: float = 1.0,
+        compounding: str = "continuous",
+        progress_callback: Optional[Callable[[int, int, dict[str, Any]], Coroutine[Any, Any, None]]] = None,
+    ) -> tuple[RiskMetricsResult, np.ndarray]:
+        """Execute large-scale Monte Carlo simulation in vectorized batches with real-time progress callbacks.
+
+        Args:
+            contract: Policy contract.
+            gross_premium: Annual gross premium.
+            n_scenarios: Total number of scenarios (e.g. 10,000+).
+            chunk_size: Vectorized batch size per iteration (default 1000).
+            seed: Master random seed.
+            surrender_values: Surrender values schedule.
+            dt: Time step.
+            compounding: Compounding method.
+            progress_callback: Optional async callback (completed_paths, total_paths, partial_summary).
+
+        Returns:
+            Tuple of (RiskMetricsResult, all_short_rates_sample_matrix)
+        """
+        if n_scenarios <= 0:
+            raise ValueError(f"n_scenarios must be positive. Got {n_scenarios}.")
+
+        all_bels: list[np.ndarray] = []
+        sample_rates: list[np.ndarray] = []
+        completed = 0
+        current_seed = seed
+
+        # Number of chunks
+        n_chunks = int(np.ceil(n_scenarios / chunk_size))
+
+        for chunk_idx in range(n_chunks):
+            current_batch_size = min(chunk_size, n_scenarios - completed)
+            batch_seed = (current_seed + chunk_idx * 1000) if current_seed is not None else None
+
+            # Execute batch synchronously in thread or loop
+            batch_bel, batch_rates = self._simulate_batch(
+                contract=contract,
+                gross_premium=gross_premium,
+                n_batch=current_batch_size,
+                seed=batch_seed,
+                surrender_values=surrender_values,
+                dt=dt,
+                compounding=compounding,
+            )
+
+            all_bels.append(batch_bel)
+            if len(sample_rates) < 15:
+                sample_rates.append(batch_rates[: min(15 - len(sample_rates), current_batch_size)])
+
+            completed += current_batch_size
+
+            # Broadcast progress to callback
+            if progress_callback is not None:
+                partial_concatenated = np.concatenate(all_bels)
+                partial_mean = float(np.mean(partial_concatenated))
+                partial_var95 = float(np.percentile(partial_concatenated, 95.0))
+                partial_metrics = {
+                    "mean_bel": round(partial_mean, 2),
+                    "var_95": round(partial_var95, 2),
+                }
+                await progress_callback(completed, n_scenarios, partial_metrics)
+                # Yield control to event loop so WebSockets can broadcast smoothly
+                await asyncio.sleep(0.001)
+
+        full_scenario_bel = np.concatenate(all_bels)
+        final_result = self._aggregate_metrics(full_scenario_bel)
+        combined_samples = np.vstack(sample_rates) if sample_rates else np.empty((0, 0))
+
+        return final_result, combined_samples
 
     def __repr__(self) -> str:
         return (

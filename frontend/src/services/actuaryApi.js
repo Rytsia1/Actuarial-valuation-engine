@@ -113,3 +113,29 @@ export async function runStochasticValuation(payload) {
     body: JSON.stringify(payload),
   });
 }
+
+/**
+ * Enqueue large-scale asynchronous stochastic simulation job
+ * POST /api/v1/valuation/stochastic/async
+ *
+ * @param {Object} payload - StochasticValuationRequest
+ * @returns {Promise<Object>} { job_id, status, total_paths, ws_endpoint }
+ */
+export async function startAsyncStochasticValuation(payload) {
+  return await apiRequest('/valuation/stochastic/async', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * Poll job status and retrieve final result when complete
+ * GET /api/v1/valuation/stochastic/status/{job_id}
+ *
+ * @param {string} jobId - Simulation job identifier
+ * @returns {Promise<Object>} AsyncJobStatusResponse
+ */
+export async function getStochasticJobStatus(jobId) {
+  return await apiRequest(`/valuation/stochastic/status/${jobId}`);
+}
+
