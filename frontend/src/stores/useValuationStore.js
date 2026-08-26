@@ -1,0 +1,262 @@
+import { defineStore } from 'pinia'
+import {
+  runDeterministicValuation,
+  runStressTest,
+  runSensitivityAnalysis,
+  runIFRS17Valuation,
+  simulateContractGraph,
+} from '../services/actuaryApi'
+
+export const useValuationStore = defineStore('valuation', {
+  state: () => ({
+    // 1. Core Actuarial Base Assumptions
+    baseAssumptions: {
+      contract_id: 'POL-BASE-001',
+      product_type: 'endowment',
+      issue_age: 30,
+      term: 20,
+      sum_assured: 1000000.0,
+      premium_paying_term: 20,
+      interest_rate: 0.05,
+      gross_premium: null,
+      table_id: 'soa_ilt',
+      expense: {
+        percent_of_premium_first: 0.35,
+        percent_of_premium_renewal: 0.05,
+        per_policy_first: 200.0,
+        per_policy_renewal: 20.0,
+      },
+      lapse: {
+        flat_annual_rate: 0.03,
+        duration_rates: [0.10, 0.07, 0.05, 0.04, 0.03],
+      },
+      vasicek: {
+        r0: 0.05,
+        kappa: 0.20,
+        theta: 0.05,
+        sigma: 0.015,
+        dt: 1.0,
+        n_scenarios: 1000,
+        seed: 42,
+      },
+      dynamicLapse: {
+        base_lapse_rate: 0.04,
+        interest_sensitivity: 1.5,
+        emergency_fund_effect: 0.0,
+        cap: 0.30,
+        floor: 0.005,
+      },
+      enable_dynamic_lapse: true,
+    },
+
+    // 2. Continuous Multi-Factor Stress Shocks
+    shocks: {
+      interest_rate_bps: 0.0,      // -200 to +200 bps
+      mortality_multiplier: 1.0,   // 0.5 to 2.0 (50% to 200%)
+      lapse_multiplier: 1.0,       // 0.5 to 2.0 (50% to 200%)
+      expense_inflation_pct: 0.0,  // 0.0% to 15.0%
+    },
+
+    // 3. Centralized Valuation Results Cache
+    valuationResults: {
+      deterministic: null,
+      stressTest: null,
+      sensitivityReport: null,
+      stochastic: null,
+      ifrs17: null,
+      portfolio: null,
+      graphSimulation: null,
+    },
+
+    // 4. UI & Computation State
+    isEvaluating: false,
+    isStressTesting: false,
+    errorMessage: null,
+    activePreset: 'endowment_20',
+  }),
+
+  getters: {
+    hasResults: (state) => !!state.valuationResults.deterministic || !!state.valuationResults.stressTest,
+    
+    effectiveDiscountRate: (state) => {
+      return state.baseAssumptions.interest_rate + (state.shocks.interest_rate_bps / 10000.0)
+    },
+    
+    currentBaselineReserve: (state) => {
+      return state.valuationResults.stressTest?.baseline_reserve || state.valuationResults.deterministic?.gpv?.bel || 0
+    },
+
+    currentStressedReserve: (state) => {
+      return state.valuationResults.stressTest?.stressed_reserve || state.currentBaselineReserve
+    },
+
+    reserveDelta: (state) => {
+      return state.valuationResults.stressTest?.delta_reserve || 0
+    },
+  },
+
+  actions: {
+    /**
+     * Update partial base assumptions
+     */
+    updateBaseAssumptions(partial) {
+      this.baseAssumptions = {
+        ...this.baseAssumptions,
+        ...partial,
+      }
+    },
+
+    /**
+     * Update real-time continuous shock parameters
+     */
+    updateShocks(partial) {
+      this.shocks = {
+        ...this.shocks,
+        ...partial,
+      }
+    },
+
+    /**
+     * Reset all shocks to baseline (0.0 bps, 1.0x, 1.0x, 0.0%)
+     */
+    resetShocks() {
+      this.shocks = {
+        interest_rate_bps: 0.0,
+        mortality_multiplier: 1.0,
+        lapse_multiplier: 1.0,
+        expense_inflation_pct: 0.0,
+      }
+    },
+
+    /**
+     * Apply structured macro-stress preset shocks
+     */
+    applyMacroPreset(presetId) {
+      switch (presetId) {
+        case 'baseline':
+          this.resetShocks()
+          break
+        case 'stagflation':
+          this.shocks = {
+            interest_rate_bps: -150.0,
+            mortality_multiplier: 1.15,
+            lapse_multiplier: 1.50,
+            expense_inflation_pct: 10.0,
+          }
+          break
+        case 'pandemic':
+          this.shocks = {
+            interest_rate_bps: -50.0,
+            mortality_multiplier: 1.40,
+            lapse_multiplier: 1.20,
+            expense_inflation_pct: 5.0,
+          }
+          break
+        case 'rate_spike':
+          this.shocks = {
+            interest_rate_bps: 200.0,
+            mortality_multiplier: 1.0,
+            lapse_multiplier: 1.80,
+            expense_inflation_pct: 3.0,
+          }
+          break
+        case 'economic_boom':
+          this.shocks = {
+            interest_rate_bps: 100.0,
+            mortality_multiplier: 0.90,
+            lapse_multiplier: 0.90,
+            expense_inflation_pct: 0.0,
+          }
+          break
+      }
+    },
+
+    /**
+     * Execute real-time stress testing sliders
+     */
+    async executeStressTest() {
+      this.isStressTesting = true
+      this.errorMessage = null
+
+      try {
+        const payload = {
+          contract_id: this.baseAssumptions.contract_id,
+          product_type: this.baseAssumptions.product_type,
+          issue_age: this.baseAssumptions.issue_age,
+          term: this.baseAssumptions.term,
+          sum_assured: this.baseAssumptions.sum_assured,
+          premium_paying_term: this.baseAssumptions.premium_paying_term,
+          interest_rate: this.baseAssumptions.interest_rate,
+          gross_premium: this.baseAssumptions.gross_premium,
+          table_id: this.baseAssumptions.table_id,
+          expense: this.baseAssumptions.expense,
+          lapse: this.baseAssumptions.lapse,
+          shocks: {
+            interest_rate_bps: this.shocks.interest_rate_bps,
+            mortality_multiplier: this.shocks.mortality_multiplier,
+            lapse_multiplier: this.shocks.lapse_multiplier,
+            expense_inflation_pct: this.shocks.expense_inflation_pct,
+          },
+        }
+
+        const res = await runStressTest(payload)
+        this.valuationResults.stressTest = res
+        return res
+      } catch (err) {
+        console.error('Stress test valuation failed:', err)
+        this.errorMessage = err.message || 'Failed to evaluate stress test.'
+        throw err
+      } finally {
+        this.isStressTesting = false
+      }
+    },
+
+    /**
+     * Execute full deterministic baseline valuation
+     */
+    async executeDeterministicValuation() {
+      this.isEvaluating = true
+      this.errorMessage = null
+
+      try {
+        const payload = {
+          product_type: this.baseAssumptions.product_type,
+          issue_age: this.baseAssumptions.issue_age,
+          term: this.baseAssumptions.term,
+          sum_assured: this.baseAssumptions.sum_assured,
+          premium_paying_term: this.baseAssumptions.premium_paying_term,
+          interest_rate: this.baseAssumptions.interest_rate,
+          gross_premium: this.baseAssumptions.gross_premium,
+          table_id: this.baseAssumptions.table_id,
+          expense: this.baseAssumptions.expense,
+          lapse: this.baseAssumptions.lapse,
+        }
+
+        const res = await runDeterministicValuation(payload)
+        this.valuationResults.deterministic = res
+        return res
+      } catch (err) {
+        console.error('Deterministic valuation failed:', err)
+        this.errorMessage = err.message || 'Failed to evaluate deterministic baseline.'
+        throw err
+      } finally {
+        this.isEvaluating = false
+      }
+    },
+
+    /**
+     * Clear all cached results
+     */
+    clearResults() {
+      this.valuationResults = {
+        deterministic: null,
+        stressTest: null,
+        sensitivityReport: null,
+        stochastic: null,
+        ifrs17: null,
+        portfolio: null,
+        graphSimulation: null,
+      }
+    },
+  },
+})

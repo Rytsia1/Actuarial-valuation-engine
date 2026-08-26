@@ -373,23 +373,23 @@ class GrossPremiumValuation:
         v = self.interest.discount_factor
         n = len(df)
 
-        death_claims = np.ascontiguousarray(df["death_claims"].to_numpy(dtype=np.float64))
-        lapse_payouts = np.ascontiguousarray(df["lapse_payouts"].to_numpy(dtype=np.float64))
-        maturity_benefit = np.ascontiguousarray(df["maturity_benefit"].to_numpy(dtype=np.float64))
-        total_expense = np.ascontiguousarray(df["total_expense"].to_numpy(dtype=np.float64))
-        premium_income = np.ascontiguousarray(df["premium_income"].to_numpy(dtype=np.float64))
-        qx_dep = np.ascontiguousarray(df["qx_dependent"].to_numpy(dtype=np.float64))
-        wx_dep = np.ascontiguousarray(df["wx_dependent"].to_numpy(dtype=np.float64))
+        safe_death_claims = np.asarray(df["death_claims"].to_numpy(dtype=np.float64), dtype=np.float64)
+        safe_lapse_payouts = np.asarray(df["lapse_payouts"].to_numpy(dtype=np.float64), dtype=np.float64)
+        safe_maturity_benefits = np.asarray(df["maturity_benefit"].to_numpy(dtype=np.float64), dtype=np.float64)
+        safe_expenses = np.asarray(df["total_expense"].to_numpy(dtype=np.float64), dtype=np.float64)
+        safe_premiums = np.asarray(df["premium_income"].to_numpy(dtype=np.float64), dtype=np.float64)
+        safe_qx_dep = np.asarray(df["qx_dependent"].to_numpy(dtype=np.float64), dtype=np.float64)
+        safe_wx_dep = np.asarray(df["wx_dependent"].to_numpy(dtype=np.float64), dtype=np.float64)
 
         # JIT kernel rollback backward induction
         reserves = _rollback_gpv_kernel(
-            death_claims=death_claims,
-            lapse_payouts=lapse_payouts,
-            maturity_benefits=maturity_benefit,
-            expenses=total_expense,
-            premiums=premium_income,
-            qx_dep=qx_dep,
-            wx_dep=wx_dep,
+            death_claims=safe_death_claims,
+            lapse_payouts=safe_lapse_payouts,
+            maturity_benefits=safe_maturity_benefits,
+            expenses=safe_expenses,
+            premiums=safe_premiums,
+            qx_dep=safe_qx_dep,
+            wx_dep=safe_wx_dep,
             discount_v=float(v),
             max_t=int(n),
         )

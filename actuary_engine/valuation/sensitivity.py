@@ -357,11 +357,18 @@ class SensitivityEngine:
 
         tornado_items: list[TornadoItem] = []
         for shock in shocks_to_run:
-            low_eval = self.evaluate_point(contract, gross_premium=gross_premium, **shock["low_kwargs"])
-            high_eval = self.evaluate_point(contract, gross_premium=gross_premium, **shock["high_kwargs"])
+            low_kwargs = shock.get("low_kwargs", {})
+            if not isinstance(low_kwargs, dict):
+                low_kwargs = {}
+            high_kwargs = shock.get("high_kwargs", {})
+            if not isinstance(high_kwargs, dict):
+                high_kwargs = {}
 
-            v_l = low_eval["reserve"]
-            v_h = high_eval["reserve"]
+            low_eval = self.evaluate_point(contract, gross_premium=gross_premium, **low_kwargs)
+            high_eval = self.evaluate_point(contract, gross_premium=gross_premium, **high_kwargs)
+
+            v_l = float(low_eval["reserve"])
+            v_h = float(high_eval["reserve"])
 
             delta_l = v_l - v_base
             delta_h = v_h - v_base
@@ -370,10 +377,10 @@ class SensitivityEngine:
 
             tornado_items.append(
                 TornadoItem(
-                    risk_factor=shock["risk_factor"],
-                    category=shock["category"],
-                    low_label=shock["low_label"],
-                    high_label=shock["high_label"],
+                    risk_factor=str(shock.get("risk_factor", "")),
+                    category=str(shock.get("category", "")),
+                    low_label=str(shock.get("low_label", "")),
+                    high_label=str(shock.get("high_label", "")),
                     low_reserve=round(v_l, 2),
                     high_reserve=round(v_h, 2),
                     low_delta=round(delta_l, 2),
@@ -470,24 +477,28 @@ class SensitivityEngine:
 
         results: list[CombinedScenarioResult] = []
         for sc in scenarios_defs:
-            shock_eval = self.evaluate_point(contract, gross_premium=gross_premium, **sc["eval_kwargs"])
-            v_s = shock_eval["reserve"]
+            eval_kwargs = sc.get("eval_kwargs", {})
+            if not isinstance(eval_kwargs, dict):
+                eval_kwargs = {}
+
+            shock_eval = self.evaluate_point(contract, gross_premium=gross_premium, **eval_kwargs)
+            v_s = float(shock_eval["reserve"])
             delta = v_s - v_base
             delta_pct = (delta / abs_base) * 100.0
 
             results.append(
                 CombinedScenarioResult(
-                    scenario_id=sc["scenario_id"],
-                    name=sc["name"],
-                    description=sc["description"],
-                    rate_shift_bps=sc["rate_shift_bps"],
-                    mortality_multiplier=sc["mortality_mult"],
-                    lapse_multiplier=sc["lapse_mult"],
-                    expense_multiplier=sc["expense_mult"],
+                    scenario_id=str(sc.get("scenario_id", "")),
+                    name=str(sc.get("name", "")),
+                    description=str(sc.get("description", "")),
+                    rate_shift_bps=float(sc.get("rate_shift_bps", 0.0)),
+                    mortality_multiplier=float(sc.get("mortality_mult", 1.0)),
+                    lapse_multiplier=float(sc.get("lapse_mult", 1.0)),
+                    expense_multiplier=float(sc.get("expense_mult", 1.0)),
                     shocked_reserve=round(v_s, 2),
                     delta_reserve=round(delta, 2),
                     delta_pct=round(delta_pct, 2),
-                    solvency_impact=sc["solvency_impact"],
+                    solvency_impact=str(sc.get("solvency_impact", "MODERATE")),
                 )
             )
 
@@ -675,13 +686,23 @@ class SensitivityEngine:
 
         tornado_items: list[dict[str, Any]] = []
         for item in tornado_defs:
-            l_eval = self.evaluate_point(contract, gross_premium=eff_gp, **item["low_kwargs"])
-            h_eval = self.evaluate_point(contract, gross_premium=eff_gp, **item["high_kwargs"])
-            c_eval = self.evaluate_point(contract, gross_premium=eff_gp, **item["current_kwargs"])
+            l_kwargs = item.get("low_kwargs", {})
+            if not isinstance(l_kwargs, dict):
+                l_kwargs = {}
+            h_kwargs = item.get("high_kwargs", {})
+            if not isinstance(h_kwargs, dict):
+                h_kwargs = {}
+            c_kwargs = item.get("current_kwargs", {})
+            if not isinstance(c_kwargs, dict):
+                c_kwargs = {}
 
-            v_l = l_eval["reserve"]
-            v_h = h_eval["reserve"]
-            v_c = c_eval["reserve"]
+            l_eval = self.evaluate_point(contract, gross_premium=eff_gp, **l_kwargs)
+            h_eval = self.evaluate_point(contract, gross_premium=eff_gp, **h_kwargs)
+            c_eval = self.evaluate_point(contract, gross_premium=eff_gp, **c_kwargs)
+
+            v_l = float(l_eval["reserve"])
+            v_h = float(h_eval["reserve"])
+            v_c = float(c_eval["reserve"])
 
             delta_l = v_l - v_base
             delta_h = v_h - v_base
@@ -690,17 +711,17 @@ class SensitivityEngine:
             swing_pct = (swing / abs_base) * 100.0
 
             tornado_items.append({
-                "risk_factor": item["risk_factor"],
-                "category": item["category"],
-                "low_label": item["low_label"],
-                "high_label": item["high_label"],
+                "risk_factor": str(item.get("risk_factor", "")),
+                "category": str(item.get("category", "")),
+                "low_label": str(item.get("low_label", "")),
+                "high_label": str(item.get("high_label", "")),
                 "low_reserve": round(v_l, 2),
                 "high_reserve": round(v_h, 2),
                 "low_delta": round(delta_l, 2),
                 "high_delta": round(delta_h, 2),
                 "low_delta_pct": round((delta_l / abs_base) * 100.0, 2),
                 "high_delta_pct": round((delta_h / abs_base) * 100.0, 2),
-                "current_label": item["current_label"],
+                "current_label": str(item.get("current_label", "")),
                 "current_reserve": round(v_c, 2),
                 "current_delta": round(delta_c, 2),
                 "current_delta_pct": round((delta_c / abs_base) * 100.0, 2),

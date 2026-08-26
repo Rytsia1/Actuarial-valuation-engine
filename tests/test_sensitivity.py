@@ -229,3 +229,30 @@ class TestSensitivityAPI:
 
         assert data["product_type"] == "term"
         assert len(data["reserve_trajectory"]) == 16  # t=0..15 (16 points)
+
+    def test_invalid_shocks_payload_returns_422(self) -> None:
+        """Test that invalid non-dict shocks payloads are rejected by Pydantic validation."""
+        client = TestClient(app)
+        payload = {
+            "product_type": "term",
+            "issue_age": 35,
+            "shocks": "invalid_string_instead_of_dict",
+        }
+        response = client.post("/api/v1/valuation/sensitivity/tornado", json=payload)
+        assert response.status_code == 422
+
+    def test_valid_custom_shocks_in_sensitivity_request(self) -> None:
+        """Test that valid dictionary shocks are parsed and accepted."""
+        client = TestClient(app)
+        payload = {
+            "product_type": "endowment",
+            "issue_age": 30,
+            "term": 20,
+            "sum_assured": 1_000_000.0,
+            "shocks": {"interest_shift": -0.01, "mortality_mult": 1.10},
+        }
+        response = client.post("/api/v1/valuation/sensitivity/tornado", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+        assert "tornado_items" in data
+        assert "combined_scenarios" in data

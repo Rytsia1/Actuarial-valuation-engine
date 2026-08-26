@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import Any, Optional, Union
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from actuary_engine.models.assumptions import ExpenseAssumption, LapseAssumption
 from actuary_engine.models.contracts import ProductType
@@ -358,6 +358,16 @@ class SensitivityRequest(BaseModel):
     table_id: str = Field(default="soa_ilt", description="Mortality table identifier.")
     expense: Optional[ExpenseAssumption] = Field(default=None, description="Acquisition and maintenance expense loadings.")
     lapse: Optional[LapseAssumption] = Field(default=None, description="Policyholder lapse decrement rates.")
+    shocks: dict[str, float] = Field(default_factory=dict, description="Custom risk factor shocks.")
+
+    @field_validator("shocks", mode="before")
+    @classmethod
+    def ensure_dict(cls, v: Any) -> dict[str, float]:
+        if v is None:
+            return {}
+        if not isinstance(v, dict):
+            raise ValueError("shocks must be a valid dictionary")
+        return {str(k): float(val) for k, val in v.items()}
 
 
 class SensitivityResponse(BaseModel):
@@ -404,9 +414,18 @@ class StressTestRequest(BaseModel):
     expense: Optional[ExpenseAssumption] = Field(default=None, description="Baseline expense loadings.")
     lapse: Optional[LapseAssumption] = Field(default=None, description="Baseline lapse decrement rates.")
     base_assumptions: Optional[dict[str, Any]] = Field(default=None, description="Optional dictionary of base assumptions.")
-    shocks: StressTestShocks = Field(
+    shocks: Union[StressTestShocks, dict[str, float]] = Field(
         default_factory=StressTestShocks, description="Real-time shock parameters."
     )
+
+    @field_validator("shocks", mode="before")
+    @classmethod
+    def ensure_stress_shocks(cls, v: Any) -> Any:
+        if v is None:
+            return StressTestShocks()
+        if not isinstance(v, (dict, StressTestShocks)):
+            raise ValueError("shocks must be a valid dictionary or StressTestShocks instance")
+        return v
 
 
 class StressTestResponse(BaseModel):

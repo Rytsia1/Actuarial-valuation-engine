@@ -1,88 +1,21 @@
 /**
  * Actuarial Engine API Service
- * Decoupled HTTP client connecting Vue 3 components directly to FastAPI backend endpoints.
+ * Centralized API interface using Axios with global interceptors, automatic error handling, and timeout safety.
  */
 
-// Base URL defaults to relative path (using Vite dev proxy) or configured environment variable
-const BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '');
-const API_BASE = BASE_URL ? `${BASE_URL}/api/v1` : '/api/v1';
+import httpClient, { ActuaryApiError } from '../api/httpClient'
 
-/**
- * Custom Actuarial API Error with status codes and structured details
- */
-export class ActuaryApiError extends Error {
-  constructor(message, status = null, details = null) {
-    super(message);
-    this.name = 'ActuaryApiError';
-    this.status = status;
-    this.details = details;
-  }
-}
+export { ActuaryApiError }
 
-/**
- * Generic request helper with robust error handling for connection & validation issues
- */
-async function apiRequest(endpoint, options = {}) {
-  const url = `${API_BASE}${endpoint}`;
-  const isFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
-
-  const defaultHeaders = {
-    'Accept': 'application/json',
-  };
-  if (!isFormData) {
-    defaultHeaders['Content-Type'] = 'application/json';
-  }
-  
-  try {
-    const res = await fetch(url, {
-      ...options,
-      headers: {
-        ...defaultHeaders,
-        ...(options.headers || {}),
-      },
-    });
-
-    if (!res.ok) {
-      let errorDetail = `HTTP ${res.status}: ${res.statusText}`;
-      let errorData = null;
-      
-      try {
-        errorData = await res.json();
-        if (errorData.detail) {
-          if (Array.isArray(errorData.detail)) {
-            // Pydantic 422 validation errors array
-            errorDetail = errorData.detail.map(e => `${e.loc.join('.')}: ${e.msg}`).join(', ');
-          } else {
-            errorDetail = String(errorData.detail);
-          }
-        }
-      } catch {
-        // Fallback if response is not JSON
-      }
-
-      throw new ActuaryApiError(errorDetail, res.status, errorData);
-    }
-
-    return await res.json();
-  } catch (err) {
-    if (err instanceof ActuaryApiError) {
-      throw err;
-    }
-    // Network errors (e.g. ECONNREFUSED when backend is down)
-    throw new ActuaryApiError(
-      `Cannot connect to FastAPI backend at ${API_BASE}. Ensure the server is running with 'uvicorn actuary_engine.api.main:app --port 8000'.`,
-      0,
-      err
-    );
-  }
-}
+const BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/+$/, '')
+const API_BASE = BASE_URL ? `${BASE_URL}/api/v1` : '/api/v1'
 
 /**
  * Health check endpoint
  * GET /api/v1/health
  */
 export async function checkHealth() {
-  return await apiRequest('/health');
+  return await httpClient.get('/health')
 }
 
 /**
@@ -90,7 +23,7 @@ export async function checkHealth() {
  * GET /api/v1/tables
  */
 export async function fetchTables() {
-  return await apiRequest('/tables');
+  return await httpClient.get('/tables')
 }
 
 /**
@@ -101,188 +34,125 @@ export async function fetchTables() {
  * @returns {Promise<Object>} TableUploadResponse
  */
 export async function uploadMortalityTable(formData) {
-  return await apiRequest('/tables/upload', {
-    method: 'POST',
-    body: formData,
-  });
+  return await httpClient.post('/tables/upload', formData)
 }
 
 /**
  * Delete a custom mortality table
  * DELETE /api/v1/tables/{table_id}
+ * 
+ * @param {string} tableId - ID of table to delete
+ * @returns {Promise<Object>} Status response
  */
 export async function deleteMortalityTable(tableId) {
-  return await apiRequest(`/tables/${tableId}`, {
-    method: 'DELETE',
-  });
+  return await httpClient.delete(`/tables/${encodeURIComponent(tableId)}`)
 }
 
 /**
- * SOA Illustrative Life Table metadata
- * GET /api/v1/tables/soa_ilt
- */
-export async function fetchTableMetadata() {
-  return await apiRequest('/tables/soa_ilt');
-}
-
-/**
- * Run deterministic valuation: net level premium, prospective/retrospective reserves, and GPV rollout
+ * Run deterministic baseline valuation
  * POST /api/v1/valuation/deterministic
  * 
- * @param {Object} payload - { product_type, issue_age, term, sum_assured, interest_rate, gross_premium, table_id, expense, lapse }
+ * @param {Object} payload - DeterministicValuationRequest
  * @returns {Promise<Object>} DeterministicValuationResponse
  */
 export async function runDeterministicValuation(payload) {
-  return await apiRequest('/valuation/deterministic', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+  return await httpClient.post('/valuation/deterministic', payload)
 }
 
 /**
- * Run stochastic valuation: Vasicek ESG, dynamic S-curve lapses, Monte Carlo liability distribution, and VaR/CVaR
- * POST /api/v1/valuation/stochastic
- * 
- * @param {Object} payload - { product_type, issue_age, term, sum_assured, gross_premium, table_id, vasicek, dynamic_lapse, expense, n_scenarios, seed }
- * @returns {Promise<Object>} StochasticValuationResponse
- */
-export async function runStochasticValuation(payload) {
-  return await apiRequest('/valuation/stochastic', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-}
-
-/**
- * Enqueue large-scale asynchronous stochastic simulation job
- * POST /api/v1/valuation/stochastic/async
- *
- * @param {Object} payload - StochasticValuationRequest
- * @returns {Promise<Object>} { job_id, status, total_paths, ws_endpoint }
- */
-export async function startAsyncStochasticValuation(payload) {
-  return await apiRequest('/valuation/stochastic/async', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-}
-
-/**
- * Poll job status and retrieve final result when complete
- * GET /api/v1/valuation/stochastic/status/{job_id}
- *
- * @param {string} jobId - Simulation job identifier
- * @returns {Promise<Object>} AsyncJobStatusResponse
- */
-export async function getStochasticJobStatus(jobId) {
-  return await apiRequest(`/valuation/stochastic/status/${jobId}`);
-}
-
-/**
- * Upload portfolio CSV file for seriatim batch valuation
- * POST /api/v1/valuation/portfolio/csv
- *
- * @param {FormData} formData - Multipart form data with 'file' and optional params
- * @returns {Promise<Object>} PortfolioValuationResponse
- */
-export async function uploadPortfolioCSV(formData) {
-  return await apiRequest('/valuation/portfolio/csv', {
-    method: 'POST',
-    body: formData,
-  });
-}
-
-/**
- * Run portfolio batch valuation from JSON records
- * POST /api/v1/valuation/portfolio
- *
- * @param {Object} payload - { policies: Array, interest_rate: Number, table_id: String, expense: Object, lapse: Object }
- * @returns {Promise<Object>} PortfolioValuationResponse
- */
-export async function evaluatePortfolioJSON(payload) {
-  return await apiRequest('/valuation/portfolio', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
-}
-
-/**
- * Download sample synthetic CSV URL
- * GET /api/v1/valuation/portfolio/sample_csv
- */
-export function getSamplePortfolioCSVUrl(nPolicies = 1000) {
-  return `${API_BASE}/valuation/portfolio/sample_csv?n_policies=${nPolicies}`;
-}
-
-/**
- * Run IFRS 17 / PSAK 117 General Measurement Model (BBA) valuation
+ * Run IFRS 17 standard valuation
  * POST /api/v1/valuation/ifrs17
- *
+ * 
  * @param {Object} payload - IFRS17ValuationRequest
  * @returns {Promise<Object>} IFRS17ValuationResponse
  */
 export async function runIFRS17Valuation(payload) {
-  return await apiRequest('/valuation/ifrs17', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+  return await httpClient.post('/valuation/ifrs17', payload)
 }
 
 /**
- * Run multi-model Economic Scenario Generator simulation (Hull-White 1F, CIR, Vasicek)
- * POST /api/v1/esg/simulate
- *
- * @param {Object} payload - ESGSimulationRequest
- * @returns {Promise<Object>} ESGSimulationResponse
+ * Start asynchronous Monte Carlo stochastic simulation job
+ * POST /api/v1/valuation/stochastic/async
+ * 
+ * @param {Object} payload - StochasticValuationRequest
+ * @returns {Promise<Object>} AsyncJobCreateResponse { job_id, status }
  */
-export async function simulateESG(payload) {
-  return await apiRequest('/esg/simulate', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+export async function startAsyncStochasticValuation(payload) {
+  return await httpClient.post('/valuation/stochastic/async', payload)
 }
 
 /**
- * Run stress testing and Tornado sensitivity analysis
+ * Check status of background stochastic valuation job
+ * GET /api/v1/valuation/stochastic/status/{job_id}
+ * 
+ * @param {string} jobId - UUID of the async job
+ * @returns {Promise<Object>} AsyncJobStatusResponse
+ */
+export async function getStochasticJobStatus(jobId) {
+  return await httpClient.get(`/valuation/stochastic/status/${encodeURIComponent(jobId)}`)
+}
+
+/**
+ * Run synchronous stochastic valuation (legacy / fast simulation)
+ * POST /api/v1/valuation/stochastic
+ * 
+ * @param {Object} payload - StochasticValuationRequest
+ * @returns {Promise<Object>} StochasticValuationResponse
+ */
+export async function runStochasticValuation(payload) {
+  return await httpClient.post('/valuation/stochastic', payload)
+}
+
+/**
+ * Upload seriatim portfolio CSV for parallel batch valuation
+ * POST /api/v1/valuation/portfolio/csv
+ * 
+ * @param {FormData} formData - Multipart with 'file' and valuation parameters
+ * @returns {Promise<Object>} PortfolioValuationResponse
+ */
+export async function uploadPortfolioCSV(formData) {
+  return await httpClient.post('/valuation/portfolio/csv', formData)
+}
+
+/**
+ * Get direct download URL for synthetic portfolio CSV
+ * 
+ * @param {number} count - Number of policies to generate
+ * @returns {string} URL string
+ */
+export function getSamplePortfolioCSVUrl(count = 1000) {
+  return `${API_BASE}/valuation/portfolio/sample-csv?count=${count}`
+}
+
+/**
+ * Run multi-factor sensitivity analysis & Tornado chart evaluation
  * POST /api/v1/valuation/sensitivity/tornado
- *
+ * 
  * @param {Object} payload - SensitivityRequest
  * @returns {Promise<Object>} SensitivityResponse
  */
 export async function runSensitivityAnalysis(payload) {
-  return await apiRequest('/valuation/sensitivity/tornado', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+  return await httpClient.post('/valuation/sensitivity/tornado', payload)
 }
 
 /**
  * Run real-time stress testing with interactive slider shocks
  * POST /api/v1/valuation/stress-test
- *
+ * 
  * @param {Object} payload - StressTestRequest
  * @returns {Promise<Object>} StressTestResponse
  */
 export async function runStressTest(payload) {
-  return await apiRequest('/valuation/stress-test', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+  return await httpClient.post('/valuation/stress-test', payload)
 }
 
 /**
  * Simulate visual node-based contract graph DAG
  * POST /api/v1/contracts/simulate-graph
- *
+ * 
  * @param {Object} payload - ContractGraphPayload
  * @returns {Promise<Object>} SimulateGraphResponse
  */
 export async function simulateContractGraph(payload) {
-  return await apiRequest('/contracts/simulate-graph', {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  });
+  return await httpClient.post('/contracts/simulate-graph', payload)
 }
-
-
-

@@ -146,10 +146,16 @@ class PortfolioValuationEngine:
         df["premium_paying_term"] = df["premium_paying_term"].fillna(df["term_years"]).astype(int)
 
         # Attained Age & Remaining Horizon
-        df["attained_age"] = df["issue_age"] + df["policy_duration_years"]
-        df["remaining_term"] = np.maximum(0, df["term_years"] - df["policy_duration_years"])
-        df["remaining_prem_term"] = np.maximum(
-            0, np.minimum(df["remaining_term"], df["premium_paying_term"] - df["policy_duration_years"])
+        issue_age_arr = df["issue_age"].to_numpy(dtype=np.int64)
+        pol_dur_arr = df["policy_duration_years"].to_numpy(dtype=np.int64)
+        term_years_arr = df["term_years"].to_numpy(dtype=np.int64)
+        prem_term_arr = df["premium_paying_term"].to_numpy(dtype=np.int64)
+
+        df["attained_age"] = np.asarray(issue_age_arr + pol_dur_arr, dtype=np.int64)
+        df["remaining_term"] = np.asarray(np.maximum(0, term_years_arr - pol_dur_arr), dtype=np.int64)
+        df["remaining_prem_term"] = np.asarray(
+            np.maximum(0, np.minimum(term_years_arr - pol_dur_arr, prem_term_arr - pol_dur_arr)),
+            dtype=np.int64,
         )
 
         return df
@@ -221,17 +227,17 @@ class PortfolioValuationEngine:
             inforce_matrix[:, 1:] = np.cumprod(p_step_masked[:, :-1], axis=1)
 
         # Zero out inactive cells
-        inforce_matrix = inforce_matrix * active_mask
+        inforce_matrix = np.where(active_mask, inforce_matrix, 0.0)
 
         # ────────────────────────────────────────────────────────
         # 3. Vectorized Cash Flow Matrices (N, T)
         # ────────────────────────────────────────────────────────
         # Premium Income (BOY)
-        prem_income = gross_prems[:, np.newaxis] * inforce_matrix * prem_mask  # (N, T)
+        prem_income = np.where(prem_mask, gross_prems[:, np.newaxis] * inforce_matrix, 0.0)
 
         # Death Claims (EOY)
         is_pure_endow = (ptypes == "pure_endowment")[:, np.newaxis]
-        death_claims = faces[:, np.newaxis] * inforce_matrix * qx_dep * active_mask
+        death_claims = np.where(active_mask, faces[:, np.newaxis] * inforce_matrix * qx_dep, 0.0)
         death_claims = np.where(is_pure_endow, 0.0, death_claims)  # (N, T)
 
         # Maturity Benefit (EOY of terminal year n_i - 1)
@@ -239,7 +245,7 @@ class PortfolioValuationEngine:
         is_endow = np.isin(ptypes, ["endowment", "pure_endowment"])
 
         terminal_t = rem_terms - 1
-        valid_term_mask = (terminal_t >= 0) & (terminal_t < max_horizon) & is_endow
+        valid_term_mask = np.logical_and.reduce((terminal_t >= 0, terminal_t < max_horizon, is_endow))
 
         if np.any(valid_term_mask):
             valid_indices = np.where(valid_term_mask)[0]
@@ -260,7 +266,7 @@ class PortfolioValuationEngine:
             self.expense.per_policy_first,
             self.expense.per_policy_renewal,
         )
-        expenses = (prem_income * pct_rate) + (inforce_matrix * per_pol_rate * active_mask)
+        expenses = (prem_income * pct_rate) + np.where(active_mask, inforce_matrix * per_pol_rate, 0.0)
 
         # ────────────────────────────────────────────────────────
         # 4. Vectorized Discounting & Present Values
@@ -277,10 +283,10 @@ class PortfolioValuationEngine:
 
         # Attach seriatim results to DataFrame
         res_df = df.assign(
-            pvfb=np.round(pvfb_per_policy, 2).astype(float),
-            pvfp=np.round(pvfp_per_policy, 2).astype(float),
-            pvfe=np.round(pvfe_per_policy, 2).astype(float),
-            bel=np.round(bel_per_policy, 2).astype(float),
+            pvfb=np.asarray(np.round(pvfb_per_policy, 2), dtype=np.float64),
+            pvfp=np.asarray(np.round(pvfp_per_policy, 2), dtype=np.float64),
+            pvfe=np.asarray(np.round(pvfe_per_policy, 2), dtype=np.float64),
+            bel=np.asarray(np.round(bel_per_policy, 2), dtype=np.float64),
         )
 
         # ────────────────────────────────────────────────────────
