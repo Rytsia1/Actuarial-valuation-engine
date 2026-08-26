@@ -3,6 +3,9 @@ import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import {
   checkHealth,
+  fetchTables,
+  uploadMortalityTable,
+  deleteMortalityTable,
   runDeterministicValuation,
   startAsyncStochasticValuation,
   getStochasticJobStatus,
@@ -22,6 +25,16 @@ const backendStatus = ref('checking') // 'healthy', 'error', 'checking'
 const loading = ref(false)
 const errorMessage = ref(null)
 const backendDetails = ref(null)
+
+// Mortality Table Registry State
+const availableTables = ref([])
+const showTableModal = ref(false)
+const uploadTableLoading = ref(false)
+const uploadTableError = ref(null)
+const uploadTableName = ref('')
+const uploadTableDesc = ref('')
+const uploadTableFile = ref(null)
+const isTableDragging = ref(false)
 
 // Simulation Progress Tracking
 const isSimulating = ref(false)
@@ -47,6 +60,7 @@ const form = reactive({
   premium_paying_term: null,
   interest_rate: 0.05,
   gross_premium: null,
+  table_id: 'soa_ilt',
   expense: {
     percent_of_premium_first: 0.35,
     percent_of_premium_renewal: 0.05,
@@ -166,11 +180,24 @@ function applyPreset(type) {
 // API Communication & Valuation Orchestrator (Async + WebSockets)
 // ────────────────────────────────────────────────────────────
 
+async function loadTableCatalogue() {
+  try {
+    const tables = await fetchTables()
+    availableTables.value = tables
+    if (tables.length > 0 && !availableTables.value.some(t => t.table_id === form.table_id)) {
+      form.table_id = tables[0].table_id
+    }
+  } catch (err) {
+    console.warn('Failed to load table catalogue:', err)
+  }
+}
+
 async function checkBackendConnection() {
   try {
     const health = await checkHealth()
     backendStatus.value = health.status === 'healthy' ? 'healthy' : 'error'
     backendDetails.value = health
+    await loadTableCatalogue()
     return true
   } catch (err) {
     console.warn('Backend health check error:', err)
@@ -203,6 +230,7 @@ async function executeValuation() {
       premium_paying_term: form.premium_paying_term,
       interest_rate: form.interest_rate,
       gross_premium: form.gross_premium,
+      table_id: form.table_id,
       expense: form.expense,
       lapse: form.lapse,
     }
@@ -214,6 +242,7 @@ async function executeValuation() {
       sum_assured: form.sum_assured,
       premium_paying_term: form.premium_paying_term,
       gross_premium: form.gross_premium,
+      table_id: form.table_id,
       vasicek: form.vasicek,
       dynamic_lapse: form.enable_dynamic_lapse ? form.dynamic_lapse : null,
       expense: form.expense,
@@ -303,6 +332,52 @@ async function executeValuation() {
 }
 
 // ────────────────────────────────────────────────────────────
+// Custom Mortality Table Upload
+// ────────────────────────────────────────────────────────────
+
+function handleTableFileSelect(event) {
+  uploadTableFile.value = event.target.files?.[0] || null
+}
+
+function handleTableFileDrop(event) {
+  isTableDragging.value = false
+  uploadTableFile.value = event.dataTransfer?.files?.[0] || null
+}
+
+async function submitCustomTable() {
+  if (!uploadTableFile.value) {
+    uploadTableError.value = 'Please select a mortality table file (.csv, .xml, .xtbml).'
+    return
+  }
+
+  uploadTableLoading.value = true
+  uploadTableError.value = null
+
+  try {
+    const formData = new FormData()
+    formData.append('file', uploadTableFile.value)
+    if (uploadTableName.value) formData.append('table_name', uploadTableName.value)
+    if (uploadTableDesc.value) formData.append('table_description', uploadTableDesc.value)
+
+    const res = await uploadMortalityTable(formData)
+    await loadTableCatalogue()
+    form.table_id = res.table_id
+
+    showTableModal.value = false
+    uploadTableFile.value = null
+    uploadTableName.value = ''
+    uploadTableDesc.value = ''
+
+    await executeValuation()
+  } catch (err) {
+    console.error('Table upload error:', err)
+    uploadTableError.value = err.message || 'Failed to upload mortality table.'
+  } finally {
+    uploadTableLoading.value = false
+  }
+}
+
+// ────────────────────────────────────────────────────────────
 // Portfolio Batch Upload & Processing
 // ────────────────────────────────────────────────────────────
 
@@ -327,6 +402,7 @@ async function processPortfolioFile(file) {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('interest_rate', portfolioInterestRate.value)
+    formData.append('table_id', form.table_id)
 
     const res = await uploadPortfolioCSV(formData)
     portfolioData.value = res
@@ -769,7 +845,7 @@ onUnmounted(() => {
               ]"
             ></span>
             <span class="text-slate-300 text-[11px] font-medium">
-              {{ backendStatus === 'healthy' ? 'SOA ILT API Connected' : 'FastAPI Offline' }}
+              {{ backendStatus === 'healthy' ? 'FastAPI Connected' : 'FastAPI Offline' }}
             </span>
           </div>
 
@@ -856,15 +932,15 @@ onUnmounted(() => {
     <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-4 text-center relative z-10">
       <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-white/[0.04] border border-fuchsia-500/20 backdrop-blur-xl mb-4 shadow-[0_0_20px_rgba(236,72,153,0.15)]">
         <span class="h-1.5 w-1.5 rounded-full bg-fuchsia-400 animate-pulse"></span>
-        <span class="text-xs font-medium text-slate-300">Seriatim Batch Portfolio & Monte Carlo Engine</span>
-        <span class="text-[10px] text-fuchsia-400 font-mono">⚡ 80k+ Policies/sec</span>
+        <span class="text-xs font-medium text-slate-300">Dynamic Tables & Seriatim Batch Engine</span>
+        <span class="text-[10px] text-fuchsia-400 font-mono">⚡ Multi-Format CSV / XTbML</span>
       </div>
 
       <h1 class="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight text-white max-w-4xl mx-auto leading-tight">
         The fastest way to <span class="text-transparent bg-clip-text bg-gradient-to-r from-fuchsia-400 via-rose-400 to-amber-300">model, value & stress-test</span> actuarial liabilities.
       </h1>
       <p class="mt-3 text-sm text-slate-400 max-w-2xl mx-auto font-mono">
-        Prospective reserves ${_t V}$, multi-decrement portfolio BEL, and Vasicek Monte Carlo risk simulation.
+        Dynamic mortality tables, prospective reserves ${_t V}$, portfolio BEL, and Vasicek Monte Carlo risk simulation.
       </p>
 
       <!-- Preset Quick Bar -->
@@ -1129,7 +1205,7 @@ onUnmounted(() => {
           <div class="bg-black/40 rounded-xl p-5 border border-white/[0.06] space-y-4 font-mono text-xs">
             <div class="text-[11px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-800 pb-2 flex items-center justify-between">
               <span>Valuation Summary</span>
-              <span class="text-fuchsia-400">FastAPI WebSocket</span>
+              <span class="text-fuchsia-400">{{ deterministicData?.table_name || 'SOA ILT' }}</span>
             </div>
 
             <div class="space-y-3">
@@ -1243,11 +1319,33 @@ onUnmounted(() => {
               <h2 class="text-xs font-bold font-mono uppercase tracking-wider text-fuchsia-400 flex items-center space-x-2">
                 <span>⚙️ Contract & ESG Controls</span>
               </h2>
-              <span class="text-[10px] font-mono text-slate-400">WebSocket Ready</span>
+              <span class="text-[10px] font-mono text-slate-400">Dynamic Tables</span>
+            </div>
+
+            <!-- Mortality Table Selection -->
+            <div class="space-y-2">
+              <div class="flex items-center justify-between">
+                <label class="block text-xs font-medium text-slate-300 font-mono">Mortality Life Table</label>
+                <button
+                  @click="showTableModal = true"
+                  class="text-[11px] font-mono text-fuchsia-400 hover:text-fuchsia-300 flex items-center space-x-1"
+                >
+                  <span>➕ Upload Table</span>
+                </button>
+              </div>
+              <select
+                v-model="form.table_id"
+                @change="executeValuation"
+                class="w-full bg-[#070b14] border border-white/[0.1] rounded-xl px-3 py-2 text-xs text-white font-mono focus:border-fuchsia-500 focus:ring-1 focus:ring-fuchsia-500 transition"
+              >
+                <option v-for="t in availableTables" :key="t.table_id" :value="t.table_id">
+                  {{ t.name }} {{ t.is_builtin ? '(Built-in)' : '(Custom)' }}
+                </option>
+              </select>
             </div>
 
             <!-- Product Contract -->
-            <div class="space-y-3">
+            <div class="space-y-3 border-t border-white/[0.08] pt-4">
               <div>
                 <label class="block text-xs font-medium text-slate-300 mb-1 font-mono">Product Line</label>
                 <select
@@ -1533,14 +1631,102 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 9. Footer -->
+    <!-- 9. Custom Mortality Table Upload Modal -->
+    <!-- ──────────────────────────────────────────────────────────── -->
+    <div v-if="showTableModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+      <div class="neon-glass border border-white/[0.15] rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+        <div class="flex items-center justify-between border-b border-white/[0.08] pb-3">
+          <div class="flex items-center space-x-2">
+            <span class="h-3 w-3 rounded-full bg-fuchsia-500 shadow-[0_0_8px_#ec4899]"></span>
+            <h3 class="text-sm font-bold text-white tracking-wide">Upload Custom Mortality Table</h3>
+          </div>
+          <button @click="showTableModal = false" class="text-slate-400 hover:text-white text-lg">✕</button>
+        </div>
+
+        <div v-if="uploadTableError" class="p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-300 text-xs font-mono">
+          {{ uploadTableError }}
+        </div>
+
+        <div class="space-y-3">
+          <div>
+            <label class="block text-xs font-mono text-slate-300 mb-1">Table Name (Optional)</label>
+            <input
+              type="text"
+              v-model="uploadTableName"
+              placeholder="e.g. 2024 Corporate Experience Table"
+              class="w-full bg-[#070b14] border border-white/[0.1] rounded-xl px-3 py-2 text-xs text-white font-mono focus:border-fuchsia-500"
+            />
+          </div>
+
+          <div>
+            <label class="block text-xs font-mono text-slate-300 mb-1">Description / Citation</label>
+            <input
+              type="text"
+              v-model="uploadTableDesc"
+              placeholder="e.g. Experience mortality rates for insured lives"
+              class="w-full bg-[#070b14] border border-white/[0.1] rounded-xl px-3 py-2 text-xs text-white font-mono focus:border-fuchsia-500"
+            />
+          </div>
+
+          <!-- Drag and Drop Zone -->
+          <div
+            @dragover.prevent="isTableDragging = true"
+            @dragleave.prevent="isTableDragging = false"
+            @drop.prevent="handleTableFileDrop"
+            :class="[
+              'border-2 border-dashed rounded-xl p-6 text-center cursor-pointer transition',
+              isTableDragging
+                ? 'border-fuchsia-400 bg-fuchsia-500/10'
+                : 'border-white/[0.15] bg-[#070b14]/50 hover:border-fuchsia-500/50'
+            ]"
+            @click="$refs.tableFileInput.click()"
+          >
+            <input
+              type="file"
+              ref="tableFileInput"
+              accept=".csv,.tsv,.txt,.xml,.xtbml"
+              class="hidden"
+              @change="handleTableFileSelect"
+            />
+            <div class="flex flex-col items-center space-y-1">
+              <span class="text-2xl">📄</span>
+              <p class="text-xs font-semibold text-white">
+                {{ uploadTableFile ? uploadTableFile.name : 'Drag and drop your table file here, or browse' }}
+              </p>
+              <p class="text-[10px] font-mono text-slate-500">
+                Formats: CSV/TSV (`age,qx` or `age,px` or `age,lx`) or SOA XTbML (XML)
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end space-x-3 pt-2">
+          <button
+            @click="showTableModal = false"
+            class="px-4 py-2 bg-white/[0.05] hover:bg-white/[0.1] text-slate-300 rounded-xl text-xs font-mono"
+          >
+            Cancel
+          </button>
+          <button
+            @click="submitCustomTable"
+            :disabled="uploadTableLoading"
+            class="px-4 py-2 bg-gradient-to-r from-fuchsia-600 to-rose-600 text-white font-bold rounded-xl text-xs font-mono shadow-lg shadow-fuchsia-600/25 flex items-center space-x-2"
+          >
+            <span>{{ uploadTableLoading ? 'Uploading...' : 'Upload & Use Table' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ──────────────────────────────────────────────────────────── -->
+    <!-- 10. Footer -->
     <!-- ──────────────────────────────────────────────────────────── -->
     <footer class="border-t border-white/[0.08] bg-[#030712] py-6 mt-12 relative z-10">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between text-xs font-mono text-slate-500 gap-2">
         <div class="flex items-center space-x-2">
           <span class="text-fuchsia-400">ACTUARY ENGINE</span>
           <span>•</span>
-          <span>SOA Illustrative Life Table (ω=110)</span>
+          <span>Dynamic Mortality Tables</span>
           <span>•</span>
           <span>Portfolio Batch Engine</span>
         </div>

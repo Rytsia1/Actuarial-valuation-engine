@@ -13,6 +13,41 @@ from actuary_engine.stochastic.dynamic_lapse import DynamicLapseParams
 from actuary_engine.stochastic.esg import VasicekParams
 
 
+# ────────────────────────────────────────────────────────────
+# Table Registry Schemas
+# ───────────────────────────────────────────────────────────
+
+class TableUploadResponse(BaseModel):
+    """Response returned upon uploading and registering a custom mortality table."""
+
+    status: str = Field(default="success", description="Upload operation status.")
+    table_id: str = Field(..., description="Assigned table identifier.")
+    table_name: str = Field(..., description="Human-readable table name.")
+    min_age: int = Field(..., description="Minimum issue age available.")
+    max_age: int = Field(..., description="Maximum age (omega).")
+    rows_count: int = Field(..., description="Number of age cohorts in table.")
+    is_builtin: bool = Field(default=False, description="Whether table is bundled system table.")
+    sample_qx: dict[str, float] = Field(default_factory=dict, description="Sample mortality rates.")
+
+
+class TableListItem(BaseModel):
+    """Summary item for table catalogue listings."""
+
+    table_id: str
+    name: str
+    description: str
+    min_age: int
+    max_age: int
+    omega: int
+    radix: int
+    is_builtin: bool
+    sample_qx: dict[str, float]
+
+
+# ────────────────────────────────────────────────────────────
+# Valuation Request & Response Schemas
+# ────────────────────────────────────────────────────────────
+
 class DeterministicValuationRequest(BaseModel):
     """Request payload for Level 1-3 deterministic life insurance valuation."""
 
@@ -27,6 +62,7 @@ class DeterministicValuationRequest(BaseModel):
     gross_premium: Optional[float] = Field(
         default=None, gt=0.0, description="Gross premium. If None, calculated with 20% loading."
     )
+    table_id: str = Field(default="soa_ilt", description="Mortality table identifier from TableRegistry.")
     expense: Optional[ExpenseAssumption] = Field(
         default=None, description="Expense loadings."
     )
@@ -47,6 +83,8 @@ class DeterministicValuationResponse(BaseModel):
     nsp: float
     annuity_factor: float
     bel: float
+    table_id: str = "soa_ilt"
+    table_name: str = "SOA Illustrative Life Table"
     reserve_profile: list[dict[str, Any]]
     cash_flows: list[dict[str, Any]]
 
@@ -64,6 +102,7 @@ class StochasticValuationRequest(BaseModel):
     gross_premium: Optional[float] = Field(
         default=None, gt=0.0, description="Gross premium. If None, calculated with 25% loading."
     )
+    table_id: str = Field(default="soa_ilt", description="Mortality table identifier from TableRegistry.")
     vasicek: VasicekParams = Field(
         default_factory=lambda: VasicekParams(r0=0.05, kappa=0.20, theta=0.05, sigma=0.015),
         description="Vasicek ESG short-rate model parameters.",
@@ -141,6 +180,7 @@ class PortfolioValuationJSONRequest(BaseModel):
 
     policies: list[PortfolioPolicyRecord] = Field(..., description="List of policy contracts.")
     interest_rate: float = Field(default=0.05, gt=0.0, le=0.50, description="Discount rate.")
+    table_id: str = Field(default="soa_ilt", description="Mortality table identifier.")
     expense: Optional[ExpenseAssumption] = Field(default=None, description="Expense assumptions.")
     lapse: Optional[LapseAssumption] = Field(default=None, description="Lapse assumptions.")
 

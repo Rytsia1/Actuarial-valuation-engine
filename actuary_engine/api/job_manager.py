@@ -54,6 +54,13 @@ class JobManager:
         """Retrieve job state by ID."""
         return self._jobs.get(job_id)
 
+    def set_processing(self, job_id: str) -> None:
+        """Mark job as PROCESSING."""
+        job = self._jobs.get(job_id)
+        if job:
+            job.status = JobStatus.PROCESSING
+            job.updated_at = time.time()
+
     async def update_progress(
         self,
         job_id: str,

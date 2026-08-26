@@ -28,6 +28,13 @@ from actuary_engine.stochastic.monte_carlo import (
 )
 from actuary_engine.tables.commutation import CommutationFunctions
 from actuary_engine.tables.mortality_table import MortalityTable
+from actuary_engine.tables.parsers import (
+    TableParsingError,
+    parse_csv_mortality_table,
+    parse_mortality_file,
+    parse_xtbml_mortality_table,
+)
+from actuary_engine.tables.registry import TableMetadata, TableRegistry, table_registry
 from actuary_engine.valuation.gpv import GrossPremiumValuation
 from actuary_engine.valuation.portfolio import PortfolioSummary, PortfolioValuationEngine
 from actuary_engine.valuation.reserves import ReserveCalculator
@@ -35,6 +42,13 @@ from actuary_engine.valuation.reserves import ReserveCalculator
 __all__ = [
     "MortalityTable",
     "CommutationFunctions",
+    "TableMetadata",
+    "TableRegistry",
+    "table_registry",
+    "TableParsingError",
+    "parse_csv_mortality_table",
+    "parse_xtbml_mortality_table",
+    "parse_mortality_file",
     "InsurancePricer",
     "AnnuityPricer",
     "LevelPremiumCalculator",

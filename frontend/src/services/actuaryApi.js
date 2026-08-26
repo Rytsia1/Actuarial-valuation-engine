@@ -86,6 +86,38 @@ export async function checkHealth() {
 }
 
 /**
+ * List all available mortality tables (built-in and custom uploaded)
+ * GET /api/v1/tables
+ */
+export async function fetchTables() {
+  return await apiRequest('/tables');
+}
+
+/**
+ * Upload custom mortality table file (CSV or XTbML)
+ * POST /api/v1/tables/upload
+ * 
+ * @param {FormData} formData - Contains 'file', 'table_name', 'table_description'
+ * @returns {Promise<Object>} TableUploadResponse
+ */
+export async function uploadMortalityTable(formData) {
+  return await apiRequest('/tables/upload', {
+    method: 'POST',
+    body: formData,
+  });
+}
+
+/**
+ * Delete a custom mortality table
+ * DELETE /api/v1/tables/{table_id}
+ */
+export async function deleteMortalityTable(tableId) {
+  return await apiRequest(`/tables/${tableId}`, {
+    method: 'DELETE',
+  });
+}
+
+/**
  * SOA Illustrative Life Table metadata
  * GET /api/v1/tables/soa_ilt
  */
@@ -97,7 +129,7 @@ export async function fetchTableMetadata() {
  * Run deterministic valuation: net level premium, prospective/retrospective reserves, and GPV rollout
  * POST /api/v1/valuation/deterministic
  * 
- * @param {Object} payload - { product_type, issue_age, term, sum_assured, interest_rate, gross_premium, expense, lapse }
+ * @param {Object} payload - { product_type, issue_age, term, sum_assured, interest_rate, gross_premium, table_id, expense, lapse }
  * @returns {Promise<Object>} DeterministicValuationResponse
  */
 export async function runDeterministicValuation(payload) {
@@ -111,7 +143,7 @@ export async function runDeterministicValuation(payload) {
  * Run stochastic valuation: Vasicek ESG, dynamic S-curve lapses, Monte Carlo liability distribution, and VaR/CVaR
  * POST /api/v1/valuation/stochastic
  * 
- * @param {Object} payload - { product_type, issue_age, term, sum_assured, gross_premium, vasicek, dynamic_lapse, expense, n_scenarios, seed }
+ * @param {Object} payload - { product_type, issue_age, term, sum_assured, gross_premium, table_id, vasicek, dynamic_lapse, expense, n_scenarios, seed }
  * @returns {Promise<Object>} StochasticValuationResponse
  */
 export async function runStochasticValuation(payload) {
@@ -164,7 +196,7 @@ export async function uploadPortfolioCSV(formData) {
  * Run portfolio batch valuation from JSON records
  * POST /api/v1/valuation/portfolio
  *
- * @param {Object} payload - { policies: Array, interest_rate: Number, expense: Object, lapse: Object }
+ * @param {Object} payload - { policies: Array, interest_rate: Number, table_id: String, expense: Object, lapse: Object }
  * @returns {Promise<Object>} PortfolioValuationResponse
  */
 export async function evaluatePortfolioJSON(payload) {
