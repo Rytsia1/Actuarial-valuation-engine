@@ -4,6 +4,7 @@ Pydantic Request and Response schemas for the Actuarial Valuation API.
 
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any, Optional
 from pydantic import BaseModel, Field
 
@@ -223,4 +224,91 @@ class LeeCarterForecastResponse(BaseModel):
     table_name: str
     fit: dict[str, Any]
     forecast: dict[str, Any]
+
+
+# ────────────────────────────────────────────────────────────
+# IFRS 17 / PSAK 117 Valuation Schemas
+# ────────────────────────────────────────────────────────────
+
+class IFRS17ValuationRequest(BaseModel):
+    """Request payload for IFRS 17 / PSAK 117 General Measurement Model (BBA) valuation."""
+
+    product_type: str = Field(default="endowment", description="Product line (term, endowment, whole_life, pure_endowment).")
+    issue_age: int = Field(default=35, ge=0, le=100, description="Age at policy issuance.")
+    term: Optional[int] = Field(default=20, ge=1, le=80, description="Policy coverage term in years.")
+    sum_assured: float = Field(default=500000.0, gt=0.0, description="Sum assured / Face amount.")
+    premium_paying_term: Optional[int] = Field(default=None, ge=1, description="Premium payment duration.")
+    interest_rate: float = Field(default=0.05, gt=0.0, le=0.50, description="Locked-in valuation discount rate.")
+    gross_premium: Optional[float] = Field(default=None, gt=0.0, description="Annual gross premium (auto-calculated if omitted).")
+    table_id: str = Field(default="soa_ilt", description="Mortality table identifier.")
+    ra_ratio: float = Field(default=0.06, ge=0.0, le=0.50, description="Risk Adjustment loading factor.")
+    expense: Optional[ExpenseAssumption] = Field(default=None, description="Acquisition and maintenance expense loadings.")
+    lapse: Optional[LapseAssumption] = Field(default=None, description="Policyholder lapse decrement rates.")
+
+
+class IFRS17ValuationResponse(BaseModel):
+    """Response payload for IFRS 17 / PSAK 117 Building Block Approach valuation."""
+
+    table_id: str
+    table_name: str
+    product_type: str
+    initial_balance: dict[str, Any]
+    balance_sheet_schedule: list[dict[str, Any]]
+    income_statement_schedule: list[dict[str, Any]]
+    total_insurance_revenue: float
+    total_csm_released: float
+    total_service_expenses: float
+
+
+# ────────────────────────────────────────────────────────────
+# Advanced ESG Simulation Schemas (Hull-White 1F & CIR)
+# ────────────────────────────────────────────────────────────
+
+class ESGModelType(str, Enum):
+    """Supported Economic Scenario Generator diffusion models."""
+
+    VASICEK = "VASICEK"
+    HULL_WHITE_1F = "HULL_WHITE_1F"
+    CIR = "CIR"
+
+
+class ESGSimulationRequest(BaseModel):
+    """Request payload for advanced multi-factor ESG short-rate path generation."""
+
+    model_type: ESGModelType = Field(default=ESGModelType.HULL_WHITE_1F, description="Stochastic short-rate model.")
+    benchmark_curve: Optional[str] = Field(default="US_TREASURY", description="Benchmark curve ('US_TREASURY', 'SOVEREIGN_SUN', 'FLAT').")
+    custom_yield_points: Optional[list[dict[str, float]]] = Field(
+        default=None, description="Custom yield curve pillar points [{'tenor': 1.0, 'rate': 0.05}]."
+    )
+    # Hull-White / Vasicek parameters
+    a: Optional[float] = Field(default=0.10, ge=0.001, le=2.0, description="Mean reversion speed (Hull-White / Vasicek).")
+    sigma: Optional[float] = Field(default=0.015, ge=0.0001, le=0.50, description="Rate volatility sigma.")
+    # CIR parameters
+    r0: Optional[float] = Field(default=0.05, ge=0.0001, le=0.50, description="Initial short rate.")
+    kappa: Optional[float] = Field(default=0.20, ge=0.001, le=3.0, description="CIR mean reversion kappa.")
+    theta: Optional[float] = Field(default=0.05, ge=0.0001, le=0.50, description="CIR long-term mean theta.")
+    # Simulation horizon
+    n_years: int = Field(default=20, ge=1, le=80, description="Projection horizon in years.")
+    n_scenarios: int = Field(default=1000, ge=50, le=25000, description="Scenario path count.")
+    dt: float = Field(default=1.0, ge=0.05, le=1.0, description="Time step size in years.")
+    seed: Optional[int] = Field(default=42, description="Random seed for reproducibility.")
+
+
+class ESGSimulationResponse(BaseModel):
+    """Response payload with simulated short rates, quantile fan chart, and discount curve validation."""
+
+    model_type: str
+    n_scenarios: int
+    n_years: int
+    dt: float
+    time_grid: list[float]
+    fan_chart_rates: list[dict[str, Any]]
+    sample_paths: list[list[float]]
+    market_discount_factors: list[float]
+    simulated_discount_factors: list[float]
+    pricing_error_mae: float
+    feller_condition_satisfied: Optional[bool] = None
+    feller_ratio: Optional[float] = None
+
+
 

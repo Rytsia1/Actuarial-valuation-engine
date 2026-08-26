@@ -31,6 +31,11 @@ from actuary_engine.api.schemas import (
     AsyncJobStatusResponse,
     DeterministicValuationRequest,
     DeterministicValuationResponse,
+    ESGModelType,
+    ESGSimulationRequest,
+    ESGSimulationResponse,
+    IFRS17ValuationRequest,
+    IFRS17ValuationResponse,
     LeeCarterForecastRequest,
     LeeCarterForecastResponse,
     PortfolioValuationJSONRequest,
@@ -40,11 +45,13 @@ from actuary_engine.api.schemas import (
     TableListItem,
     TableUploadResponse,
 )
+from actuary_engine.curves.yield_curve import MarketYieldCurve
 from actuary_engine.models.assumptions import ExpenseAssumption, InterestAssumption, LapseAssumption
 from actuary_engine.models.contracts import PolicyContract
 from actuary_engine.pricing.premium import LevelPremiumCalculator
 from actuary_engine.stochastic.dynamic_lapse import DynamicLapseModel
 from actuary_engine.stochastic.esg import VasicekESG
+from actuary_engine.stochastic.esg_advanced import CIRModel, CIRParams, HullWhite1FModel
 from actuary_engine.stochastic.lee_carter import LeeCarterModel
 from actuary_engine.stochastic.monte_carlo import StochasticValuationEngine
 from actuary_engine.tables.commutation import CommutationFunctions
@@ -52,6 +59,7 @@ from actuary_engine.tables.mortality_table import MortalityTable
 from actuary_engine.tables.parsers import TableParsingError, parse_mortality_file
 from actuary_engine.tables.registry import TableMetadata, table_registry
 from actuary_engine.valuation.gpv import GrossPremiumValuation
+from actuary_engine.valuation.ifrs17 import IFRS17Engine
 from actuary_engine.valuation.portfolio import PortfolioSummary, PortfolioValuationEngine
 from actuary_engine.valuation.reserves import ReserveCalculator
 
@@ -735,4 +743,186 @@ def forecast_lee_carter_mortality(request: LeeCarterForecastRequest) -> LeeCarte
     except Exception as e:
         logger.exception("Lee-Carter forecasting failed: %s", e)
         raise HTTPException(status_code=500, detail=f"Lee-Carter modeling error: {e}") from e
+
+
+# ────────────────────────────────────────────────────────────
+# IFRS 17 / PSAK 117 Valuation Endpoint
+# ────────────────────────────────────────────────────────────
+
+@app.post("/api/v1/valuation/ifrs17", response_model=IFRS17ValuationResponse)
+def evaluate_ifrs17(request: IFRS17ValuationRequest) -> IFRS17ValuationResponse:
+    """Evaluate IFRS 17 / PSAK 117 General Measurement Model (BBA) valuation."""
+    table_id = request.table_id or "soa_ilt"
+    try:
+        table = table_registry.get_table(table_id)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=f"Mortality table '{table_id}' not found.") from e
+
+    try:
+        contract = PolicyContract(
+            product_type=request.product_type,
+            issue_age=request.issue_age,
+            term=request.term,
+            sum_assured=request.sum_assured,
+            premium_paying_term=request.premium_paying_term,
+        )
+        interest = InterestAssumption(annual_rate=request.interest_rate)
+        expense = request.expense or ExpenseAssumption()
+        lapse = request.lapse or LapseAssumption()
+
+        engine = IFRS17Engine(
+            table=table,
+            interest=interest,
+            expense=expense,
+            lapse=lapse,
+            ra_ratio=request.ra_ratio,
+        )
+
+        val_result = engine.evaluate(
+            contract=contract,
+            gross_premium=request.gross_premium,
+        )
+
+        return IFRS17ValuationResponse(
+            table_id=table_id,
+            table_name=table.name,
+            product_type=request.product_type,
+            initial_balance=val_result.initial_balance.model_dump(),
+            balance_sheet_schedule=val_result.balance_sheet_schedule,
+            income_statement_schedule=val_result.income_statement_schedule,
+            total_insurance_revenue=val_result.total_insurance_revenue,
+            total_csm_released=val_result.total_csm_released,
+            total_service_expenses=val_result.total_service_expenses,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("IFRS 17 valuation failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"IFRS 17 valuation error: {e}") from e
+
+
+# ────────────────────────────────────────────────────────────
+# Advanced ESG Simulation Endpoint (Hull-White 1F & CIR)
+# ────────────────────────────────────────────────────────────
+
+@app.post("/api/v1/esg/simulate", response_model=ESGSimulationResponse)
+def simulate_esg_paths(request: ESGSimulationRequest) -> ESGSimulationResponse:
+    """Generate multi-factor stochastic short-rate paths and compare with market discount curves."""
+    try:
+        # 1. Resolve / Construct Market Yield Curve
+        if request.custom_yield_points and len(request.custom_yield_points) > 0:
+            tenors = np.array([p["tenor"] for p in request.custom_yield_points], dtype=np.float64)
+            rates = np.array([p["rate"] for p in request.custom_yield_points], dtype=np.float64)
+            curve = MarketYieldCurve(tenors, rates, method="spline")
+        elif request.benchmark_curve == "SOVEREIGN_SUN":
+            curve = MarketYieldCurve.from_sovereign_sun()
+        elif request.benchmark_curve == "FLAT":
+            curve = MarketYieldCurve.from_flat_rate(request.r0 or 0.05)
+        else:
+            curve = MarketYieldCurve.from_us_treasury()
+
+        n_steps = int(round(request.n_years / request.dt))
+        time_grid = np.linspace(0.0, request.n_years, n_steps + 1).round(3).tolist()
+
+        feller_ok = None
+        feller_rat = None
+
+        # 2. Simulate according to model choice
+        if request.model_type == ESGModelType.HULL_WHITE_1F:
+            hw_model = HullWhite1FModel(
+                yield_curve=curve,
+                a=request.a or 0.10,
+                sigma=request.sigma or 0.015,
+            )
+            rate_paths = hw_model.simulate_paths(
+                n_years=request.n_years,
+                n_scenarios=request.n_scenarios,
+                dt=request.dt,
+                seed=request.seed,
+            )
+            df_paths = hw_model.discount_factor_paths(rate_paths, dt=request.dt)
+
+        elif request.model_type == ESGModelType.CIR:
+            cir_params = CIRParams(
+                r0=request.r0 or float(curve.spot_rate(0.0)),
+                kappa=request.kappa or 0.20,
+                theta=request.theta or 0.05,
+                sigma=request.sigma or 0.03,
+            )
+            feller_ok = cir_params.is_feller_satisfied
+            feller_rat = round(cir_params.feller_ratio, 2)
+
+            cir_model = CIRModel(
+                r0=cir_params.r0,
+                kappa=cir_params.kappa,
+                theta=cir_params.theta,
+                sigma=cir_params.sigma,
+            )
+            rate_paths = cir_model.simulate_paths(
+                n_years=request.n_years,
+                n_scenarios=request.n_scenarios,
+                dt=request.dt,
+                seed=request.seed,
+            )
+            df_paths = cir_model.discount_factor_paths(rate_paths, dt=request.dt)
+
+        else:  # VASICEK
+            v_params = VasicekParams(
+                r0=request.r0 or float(curve.spot_rate(0.0)),
+                kappa=request.a or 0.20,
+                theta=request.theta or 0.05,
+                sigma=request.sigma or 0.015,
+            )
+            v_esg = VasicekESG(v_params, seed=request.seed)
+            rate_paths = v_esg.simulate_paths(
+                n_scenarios=request.n_scenarios,
+                n_years=request.n_years,
+                dt=request.dt,
+                method="exact",
+            )
+            df_paths = v_esg.discount_factor_paths(rate_paths, dt=request.dt)
+
+        # 3. Calculate fan chart statistics
+        fan_chart_rates = []
+        for t_idx, t_val in enumerate(time_grid):
+            col = rate_paths[:, t_idx]
+            fan_chart_rates.append({
+                "year": t_val,
+                "p5": round(float(np.percentile(col, 5)), 5),
+                "p25": round(float(np.percentile(col, 25)), 5),
+                "p50": round(float(np.percentile(col, 50)), 5),
+                "p75": round(float(np.percentile(col, 75)), 5),
+                "p95": round(float(np.percentile(col, 95)), 5),
+                "mean": round(float(np.mean(col)), 5),
+            })
+
+        sample_paths = rate_paths[:10, :].round(5).tolist()
+
+        # 4. Market vs Simulated Discount Factors
+        t_arr = np.array(time_grid, dtype=np.float64)
+        market_dfs = curve.zero_price(t_arr).round(5).tolist()
+        sim_dfs = np.mean(df_paths, axis=0).round(5).tolist()
+        mae = float(np.mean(np.abs(np.array(market_dfs) - np.array(sim_dfs))))
+
+        return ESGSimulationResponse(
+            model_type=request.model_type.value,
+            n_scenarios=request.n_scenarios,
+            n_years=request.n_years,
+            dt=request.dt,
+            time_grid=time_grid,
+            fan_chart_rates=fan_chart_rates,
+            sample_paths=sample_paths,
+            market_discount_factors=market_dfs,
+            simulated_discount_factors=sim_dfs,
+            pricing_error_mae=round(mae, 5),
+            feller_condition_satisfied=feller_ok,
+            feller_ratio=feller_rat,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("ESG simulation failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"ESG simulation error: {e}") from e
+
+
 

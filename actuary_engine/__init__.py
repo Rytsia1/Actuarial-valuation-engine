@@ -2,12 +2,13 @@
 Actuary Engine — Modular Actuarial Valuation & Risk Simulation Engine.
 
 A production-ready Python engine for life insurance liability modeling,
-prospective reserves, and stochastic risk simulation.
+prospective reserves, stochastic risk simulation, market yield curves, and IFRS 17 / PSAK 117 valuation.
 """
 
 __version__ = "0.3.0"
 
 from actuary_engine.curves.survival import SurvivalCurve
+from actuary_engine.curves.yield_curve import MarketYieldCurve
 from actuary_engine.models.assumptions import (
     ExpenseAssumption,
     InterestAssumption,
@@ -22,6 +23,12 @@ from actuary_engine.pricing.premium import LevelPremiumCalculator, PremiumResult
 from actuary_engine.projections.cash_flow import CashFlowProjector
 from actuary_engine.stochastic.dynamic_lapse import DynamicLapseModel, DynamicLapseParams
 from actuary_engine.stochastic.esg import VasicekESG, VasicekParams
+from actuary_engine.stochastic.esg_advanced import (
+    CIRModel,
+    CIRParams,
+    HullWhite1FModel,
+    HullWhiteParams,
+)
 from actuary_engine.stochastic.lee_carter import (
     LeeCarterFitResult,
     LeeCarterForecastSummary,
@@ -41,6 +48,12 @@ from actuary_engine.tables.parsers import (
 )
 from actuary_engine.tables.registry import TableMetadata, TableRegistry, table_registry
 from actuary_engine.valuation.gpv import GrossPremiumValuation
+from actuary_engine.valuation.ifrs17 import (
+    IFRS17CohortClassification,
+    IFRS17Engine,
+    IFRS17InitialBalance,
+    IFRS17ValuationResult,
+)
 from actuary_engine.valuation.portfolio import PortfolioSummary, PortfolioValuationEngine
 from actuary_engine.valuation.reserves import ReserveCalculator
 
@@ -59,6 +72,7 @@ __all__ = [
     "LevelPremiumCalculator",
     "PremiumResult",
     "SurvivalCurve",
+    "MarketYieldCurve",
     "CashFlowProjector",
     "InterestAssumption",
     "MortalityAssumption",
@@ -71,8 +85,16 @@ __all__ = [
     "GrossPremiumValuation",
     "PortfolioValuationEngine",
     "PortfolioSummary",
+    "IFRS17Engine",
+    "IFRS17CohortClassification",
+    "IFRS17InitialBalance",
+    "IFRS17ValuationResult",
     "VasicekParams",
     "VasicekESG",
+    "HullWhiteParams",
+    "HullWhite1FModel",
+    "CIRParams",
+    "CIRModel",
     "DynamicLapseParams",
     "DynamicLapseModel",
     "RiskMetricsResult",

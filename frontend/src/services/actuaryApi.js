@@ -213,3 +213,33 @@ export async function evaluatePortfolioJSON(payload) {
 export function getSamplePortfolioCSVUrl(nPolicies = 1000) {
   return `${API_BASE}/valuation/portfolio/sample_csv?n_policies=${nPolicies}`;
 }
+
+/**
+ * Run IFRS 17 / PSAK 117 General Measurement Model (BBA) valuation
+ * POST /api/v1/valuation/ifrs17
+ *
+ * @param {Object} payload - IFRS17ValuationRequest
+ * @returns {Promise<Object>} IFRS17ValuationResponse
+ */
+export async function runIFRS17Valuation(payload) {
+  return await apiRequest('/valuation/ifrs17', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+/**
+ * Run multi-model Economic Scenario Generator simulation (Hull-White 1F, CIR, Vasicek)
+ * POST /api/v1/esg/simulate
+ *
+ * @param {Object} payload - ESGSimulationRequest
+ * @returns {Promise<Object>} ESGSimulationResponse
+ */
+export async function simulateESG(payload) {
+  return await apiRequest('/esg/simulate', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+

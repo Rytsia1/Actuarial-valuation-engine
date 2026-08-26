@@ -7,6 +7,7 @@ import {
   uploadMortalityTable,
   deleteMortalityTable,
   runDeterministicValuation,
+  runIFRS17Valuation,
   startAsyncStochasticValuation,
   getStochasticJobStatus,
   runStochasticValuation,
@@ -20,7 +21,7 @@ import { connectSimulationSocket } from './services/simulationSocket'
 // Reactive Dashboard State
 // ────────────────────────────────────────────────────────────
 
-const activeTab = ref('overview') // 'overview', 'reserves', 'stochastic', 'cashflows', 'table', 'portfolio'
+const activeTab = ref('overview') // 'overview', 'ifrs17', 'portfolio', 'reserves', 'stochastic', 'cashflows', 'table'
 const backendStatus = ref('checking') // 'healthy', 'error', 'checking'
 const loading = ref(false)
 const errorMessage = ref(null)
@@ -51,6 +52,10 @@ const portfolioData = ref(null)
 const portfolioInterestRate = ref(0.05)
 const isDragging = ref(false)
 
+// IFRS 17 State
+const ifrs17Data = ref(null)
+const ifrs17Loading = ref(false)
+
 // Form Parameters with standard actuarial defaults
 const form = reactive({
   product_type: 'endowment',
@@ -61,6 +66,7 @@ const form = reactive({
   interest_rate: 0.05,
   gross_premium: null,
   table_id: 'soa_ilt',
+  ra_ratio: 0.06,
   expense: {
     percent_of_premium_first: 0.35,
     percent_of_premium_renewal: 0.05,
@@ -103,6 +109,8 @@ const distChartRef = ref(null)
 const portfolioCfChartRef = ref(null)
 const portfolioProdChartRef = ref(null)
 const portfolioAgeChartRef = ref(null)
+const ifrs17LrcChartRef = ref(null)
+const ifrs17PnlChartRef = ref(null)
 
 let heroChart = null
 let reserveChart = null
@@ -112,6 +120,8 @@ let distChart = null
 let portfolioCfChart = null
 let portfolioProdChart = null
 let portfolioAgeChart = null
+let ifrs17LrcChart = null
+let ifrs17PnlChart = null
 let resizeObserver = null
 
 // ────────────────────────────────────────────────────────────
@@ -177,7 +187,7 @@ function applyPreset(type) {
 }
 
 // ────────────────────────────────────────────────────────────
-// API Communication & Valuation Orchestrator (Async + WebSockets)
+// API Communication & Valuation Orchestrator
 // ────────────────────────────────────────────────────────────
 
 async function loadTableCatalogue() {
@@ -250,7 +260,22 @@ async function executeValuation() {
       seed: form.seed,
     }
 
+    const ifrs17Payload = {
+      product_type: form.product_type,
+      issue_age: form.issue_age,
+      term: form.product_type === 'whole_life' ? null : form.term,
+      sum_assured: form.sum_assured,
+      premium_paying_term: form.premium_paying_term,
+      interest_rate: form.interest_rate,
+      gross_premium: form.gross_premium,
+      table_id: form.table_id,
+      ra_ratio: form.ra_ratio,
+      expense: form.expense,
+      lapse: form.lapse,
+    }
+
     const detPromise = runDeterministicValuation(detPayload)
+    const ifrs17Promise = runIFRS17Valuation(ifrs17Payload)
 
     const asyncJobPromise = new Promise(async (resolve, reject) => {
       try {
@@ -309,10 +334,11 @@ async function executeValuation() {
       }
     })
 
-    const [detRes, stochRes] = await Promise.all([detPromise, asyncJobPromise])
+    const [detRes, stochRes, ifrs17Res] = await Promise.all([detPromise, asyncJobPromise, ifrs17Promise])
 
     deterministicData.value = detRes
     stochasticData.value = stochRes
+    ifrs17Data.value = ifrs17Res
     backendStatus.value = 'healthy'
 
     await nextTick()
@@ -724,6 +750,139 @@ function renderPortfolioCharts() {
   }
 }
 
+function renderIFRS17Charts() {
+  if (!ifrs17Data.value) return
+
+  // 1. Stacked Area Chart (LRC Transition: BEL + RA + CSM)
+  if (ifrs17LrcChartRef.value && ifrs17Data.value.balance_sheet_schedule) {
+    if (!ifrs17LrcChart) ifrs17LrcChart = echarts.init(ifrs17LrcChartRef.value)
+    const schedule = ifrs17Data.value.balance_sheet_schedule
+    const durations = schedule.map(d => `t=${d.duration}`)
+    const bels = schedule.map(d => d.bel)
+    const ras = schedule.map(d => d.risk_adjustment)
+    const csms = schedule.map(d => d.csm)
+    const lrcs = schedule.map(d => d.total_lrc)
+
+    const lrcOption = {
+      backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'axis',
+        backgroundColor: 'rgba(11, 15, 25, 0.95)',
+        borderColor: 'rgba(236, 72, 153, 0.3)',
+        textStyle: { color: '#f8fafc', fontSize: 12, fontFamily: 'JetBrains Mono' },
+      },
+      legend: {
+        data: ['Best Estimate Liability (BEL)', 'Risk Adjustment (RA)', 'Contractual Service Margin (CSM)', 'Total LRC'],
+        textStyle: { color: '#94a3b8', fontSize: 11 },
+        top: 0,
+        right: 10,
+      },
+      grid: { top: 40, left: 65, right: 25, bottom: 35 },
+      xAxis: {
+        type: 'category',
+        data: durations,
+        axisLine: { lineStyle: { color: '#334155' } },
+        axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', interval: Math.max(1, Math.floor(durations.length / 8)) },
+      },
+      yAxis: {
+        type: 'value',
+        axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', formatter: v => `$${(v / 1000).toFixed(0)}k` },
+        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } },
+      },
+      series: [
+        {
+          name: 'Best Estimate Liability (BEL)',
+          type: 'line',
+          stack: 'Total',
+          data: bels,
+          areaStyle: { color: 'rgba(56, 189, 248, 0.35)' },
+          lineStyle: { width: 1.5, color: '#38bdf8' },
+          itemStyle: { color: '#38bdf8' },
+          symbol: 'none',
+        },
+        {
+          name: 'Risk Adjustment (RA)',
+          type: 'line',
+          stack: 'Total',
+          data: ras,
+          areaStyle: { color: 'rgba(251, 146, 60, 0.45)' },
+          lineStyle: { width: 1.5, color: '#fb923c' },
+          itemStyle: { color: '#fb923c' },
+          symbol: 'none',
+        },
+        {
+          name: 'Contractual Service Margin (CSM)',
+          type: 'line',
+          stack: 'Total',
+          data: csms,
+          areaStyle: { color: 'rgba(236, 72, 153, 0.45)' },
+          lineStyle: { width: 2, color: '#ec4899' },
+          itemStyle: { color: '#ec4899' },
+          symbol: 'none',
+        },
+        {
+          name: 'Total LRC',
+          type: 'line',
+          data: lrcs,
+          smooth: true,
+          lineStyle: { width: 2.5, color: '#ffffff', type: 'dashed' },
+          itemStyle: { color: '#ffffff' },
+          symbol: 'none',
+        },
+      ],
+    }
+    ifrs17LrcChart.setOption(lrcOption, true)
+  }
+
+  // 2. Income Statement Waterfall Chart (Revenue vs Claims vs Expenses vs CSM Release)
+  if (ifrs17PnlChartRef.value && ifrs17Data.value.income_statement_schedule) {
+    if (!ifrs17PnlChart) ifrs17PnlChart = echarts.init(ifrs17PnlChartRef.value)
+    const pnl = ifrs17Data.value.income_statement_schedule
+    const years = pnl.map(d => `Yr ${d.year + 1}`)
+    const revs = pnl.map(d => d.insurance_revenue)
+    const claims = pnl.map(d => d.claims_incurred)
+    const expenses = pnl.map(d => d.expenses_incurred)
+    const csmAmort = pnl.map(d => d.csm_amortization)
+    const pnlResult = pnl.map(d => d.insurance_service_result)
+
+    const pnlOption = {
+      backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'axis',
+        backgroundColor: 'rgba(11, 15, 25, 0.95)',
+        borderColor: '#334155',
+        textStyle: { color: '#f8fafc', fontSize: 12, fontFamily: 'JetBrains Mono' },
+      },
+      legend: {
+        data: ['Insurance Revenue', 'Claims Incurred', 'Service Expenses', 'CSM Release', 'Service Result'],
+        textStyle: { color: '#94a3b8', fontSize: 11 },
+        top: 0,
+        right: 10,
+      },
+      grid: { top: 40, left: 65, right: 25, bottom: 35 },
+      xAxis: {
+        type: 'category',
+        data: years,
+        axisLine: { lineStyle: { color: '#334155' } },
+        axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', interval: Math.max(1, Math.floor(years.length / 8)) },
+      },
+      yAxis: {
+        type: 'value',
+        axisLabel: { color: '#94a3b8', fontSize: 10, fontFamily: 'JetBrains Mono', formatter: v => `$${(v / 1000).toFixed(0)}k` },
+        splitLine: { lineStyle: { color: 'rgba(255, 255, 255, 0.05)' } },
+      },
+      series: [
+        { name: 'Insurance Revenue', type: 'bar', data: revs, itemStyle: { color: '#34d399', borderRadius: [3, 3, 0, 0] } },
+        { name: 'Claims Incurred', type: 'bar', data: claims, itemStyle: { color: '#f43f5e', borderRadius: [3, 3, 0, 0] } },
+        { name: 'Service Expenses', type: 'bar', data: expenses, itemStyle: { color: '#fb923c', borderRadius: [3, 3, 0, 0] } },
+        { name: 'CSM Release', type: 'line', data: csmAmort, smooth: true, lineStyle: { width: 2, color: '#ec4899' }, itemStyle: { color: '#ec4899' } },
+        { name: 'Service Result', type: 'line', data: pnlResult, smooth: true, lineStyle: { width: 2, color: '#38bdf8' }, itemStyle: { color: '#38bdf8' } },
+      ],
+    }
+    ifrs17PnlChart.setOption(pnlOption, true)
+  }
+}
+
 function renderAllCharts() {
   renderHeroChart()
   renderReserveChart()
@@ -731,6 +890,7 @@ function renderAllCharts() {
   renderCashFlowChart()
   renderDistChart()
   renderPortfolioCharts()
+  renderIFRS17Charts()
 }
 
 // ────────────────────────────────────────────────────────────
@@ -750,6 +910,8 @@ onMounted(async () => {
     portfolioCfChart?.resize()
     portfolioProdChart?.resize()
     portfolioAgeChart?.resize()
+    ifrs17LrcChart?.resize()
+    ifrs17PnlChart?.resize()
   })
 
   if (heroChartRef.value) resizeObserver.observe(heroChartRef.value)
@@ -760,6 +922,8 @@ onMounted(async () => {
   if (portfolioCfChartRef.value) resizeObserver.observe(portfolioCfChartRef.value)
   if (portfolioProdChartRef.value) resizeObserver.observe(portfolioProdChartRef.value)
   if (portfolioAgeChartRef.value) resizeObserver.observe(portfolioAgeChartRef.value)
+  if (ifrs17LrcChartRef.value) resizeObserver.observe(ifrs17LrcChartRef.value)
+  if (ifrs17PnlChartRef.value) resizeObserver.observe(ifrs17PnlChartRef.value)
 })
 
 onUnmounted(() => {
@@ -776,6 +940,8 @@ onUnmounted(() => {
   portfolioCfChart?.dispose()
   portfolioProdChart?.dispose()
   portfolioAgeChart?.dispose()
+  ifrs17LrcChart?.dispose()
+  ifrs17PnlChart?.dispose()
 })
 </script>
 
@@ -816,6 +982,7 @@ onUnmounted(() => {
           <button
             v-for="tab in [
               { id: 'overview', label: 'Executive Overview' },
+              { id: 'ifrs17', label: 'IFRS 17 / PSAK 117 (BBA)' },
               { id: 'portfolio', label: 'Portfolio Batch (CSV)' },
               { id: 'reserves', label: 'Policy Reserves (_t V)' },
               { id: 'stochastic', label: 'Vasicek ESG & VaR' },
@@ -932,15 +1099,15 @@ onUnmounted(() => {
     <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-6 pb-4 text-center relative z-10">
       <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-white/[0.04] border border-fuchsia-500/20 backdrop-blur-xl mb-4 shadow-[0_0_20px_rgba(236,72,153,0.15)]">
         <span class="h-1.5 w-1.5 rounded-full bg-fuchsia-400 animate-pulse"></span>
-        <span class="text-xs font-medium text-slate-300">Dynamic Tables & Seriatim Batch Engine</span>
-        <span class="text-[10px] text-fuchsia-400 font-mono">⚡ Multi-Format CSV / XTbML</span>
+        <span class="text-xs font-medium text-slate-300">IFRS 17 / PSAK 117 General Measurement Model</span>
+        <span class="text-[10px] text-fuchsia-400 font-mono">⚡ BEL + RA + CSM Decomposed</span>
       </div>
 
       <h1 class="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight text-white max-w-4xl mx-auto leading-tight">
         The fastest way to <span class="text-transparent bg-clip-text bg-gradient-to-r from-fuchsia-400 via-rose-400 to-amber-300">model, value & stress-test</span> actuarial liabilities.
       </h1>
       <p class="mt-3 text-sm text-slate-400 max-w-2xl mx-auto font-mono">
-        Dynamic mortality tables, prospective reserves ${_t V}$, portfolio BEL, and Vasicek Monte Carlo risk simulation.
+        IFRS 17 Building Block Approach, dynamic mortality tables, prospective reserves ${_t V}$, and Vasicek Monte Carlo risk simulation.
       </p>
 
       <!-- Preset Quick Bar -->
@@ -965,22 +1132,201 @@ onUnmounted(() => {
           ♾️ Whole Life ($500k)
         </button>
         <button
+          @click="activeTab = 'ifrs17'; nextTick(() => renderAllCharts())"
+          class="px-3 py-1 rounded-lg text-xs font-mono font-medium bg-white/[0.04] hover:bg-amber-500/20 border border-white/[0.08] hover:border-amber-500/40 text-amber-300 transition"
+        >
+          📑 IFRS 17 / PSAK 117 (BBA)
+        </button>
+        <button
           @click="activeTab = 'portfolio'; runSamplePortfolioDemo(1000)"
           class="px-3 py-1 rounded-lg text-xs font-mono font-medium bg-white/[0.04] hover:bg-emerald-500/20 border border-white/[0.08] hover:border-emerald-500/40 text-emerald-300 transition"
         >
           📁 Batch Portfolio (1,000 Policies)
         </button>
-        <button
-          @click="applyPreset('large_scale_10k')"
-          class="px-3 py-1 rounded-lg text-xs font-mono font-medium bg-white/[0.04] hover:bg-amber-500/20 border border-white/[0.08] hover:border-amber-500/40 text-amber-300 transition"
-        >
-          🚀 10,000 Paths WebSocket
-        </button>
       </div>
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 5. PORTFOLIO BATCH WORKSPACE TAB -->
+    <!-- 5. IFRS 17 / PSAK 117 VALUATION WORKSPACE TAB -->
+    <!-- ──────────────────────────────────────────────────────────── -->
+    <section v-if="activeTab === 'ifrs17'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 relative z-10 space-y-6">
+      <!-- Top IFRS 17 Initial Recognition Cards -->
+      <div v-if="ifrs17Data?.initial_balance" class="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <!-- Classification -->
+        <div class="neon-glass rounded-2xl p-4 border border-white/[0.08]">
+          <div class="text-xs font-mono text-slate-400">COHORT GROUP</div>
+          <div class="mt-2">
+            <span
+              :class="[
+                'px-2.5 py-1 text-xs font-bold font-mono rounded-full border',
+                ifrs17Data.initial_balance.classification === 'ONEROUS'
+                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                  : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+              ]"
+            >
+              {{ ifrs17Data.initial_balance.classification }}
+            </span>
+          </div>
+          <div class="text-[11px] text-slate-400 font-mono mt-2">
+            Margin: {{ (ifrs17Data.initial_balance.profitability_margin * 100).toFixed(1) }}%
+          </div>
+        </div>
+
+        <!-- BEL -->
+        <div class="neon-glass rounded-2xl p-4 border border-white/[0.08]">
+          <div class="text-xs font-mono text-slate-400">BEST ESTIMATE (BEL)</div>
+          <div class="text-2xl font-bold font-mono text-sky-300 mt-1">
+            {{ formatCurrency(ifrs17Data.initial_balance.bel_0) }}
+          </div>
+          <div class="text-[11px] text-slate-400 font-mono mt-1">PV(Outflows) - PV(Inflows)</div>
+        </div>
+
+        <!-- RA -->
+        <div class="neon-glass rounded-2xl p-4 border border-white/[0.08]">
+          <div class="text-xs font-mono text-slate-400">RISK ADJUSTMENT (RA)</div>
+          <div class="text-2xl font-bold font-mono text-amber-300 mt-1">
+            {{ formatCurrency(ifrs17Data.initial_balance.ra_0) }}
+          </div>
+          <div class="text-[11px] text-slate-400 font-mono mt-1">Non-Financial Risk (6%)</div>
+        </div>
+
+        <!-- CSM -->
+        <div class="neon-glass rounded-2xl p-4 border border-white/[0.08]">
+          <div class="text-xs font-mono text-slate-400">INITIAL CSM (PROFIT)</div>
+          <div class="text-2xl font-bold font-mono text-fuchsia-300 mt-1">
+            {{ formatCurrency(ifrs17Data.initial_balance.csm_0) }}
+          </div>
+          <div class="text-[11px] text-fuchsia-400 font-mono mt-1">Unearned Future Profit</div>
+        </div>
+
+        <!-- Loss Component -->
+        <div class="neon-glass rounded-2xl p-4 border border-white/[0.08]">
+          <div class="text-xs font-mono text-slate-400">LOSS COMPONENT (LC)</div>
+          <div class="text-2xl font-bold font-mono text-rose-400 mt-1">
+            {{ formatCurrency(ifrs17Data.initial_balance.loss_component_0) }}
+          </div>
+          <div class="text-[11px] text-slate-400 font-mono mt-1">Day 1 P&L Impact</div>
+        </div>
+      </div>
+
+      <!-- IFRS 17 Charts Workspace -->
+      <div v-if="ifrs17Data" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- 1. LRC Transition Stacked Area Chart -->
+        <div class="neon-glass rounded-2xl p-5 border border-white/[0.08]">
+          <div class="flex items-center justify-between mb-2">
+            <div>
+              <h3 class="text-sm font-bold text-white tracking-wide">
+                Liability for Remaining Coverage (LRC) Stacked Trajectory
+              </h3>
+              <p class="text-xs text-slate-400 font-mono">
+                $\text{LRC}_t = \text{BEL}_t$ (Cyan) + $\text{RA}_t$ (Orange) + $\text{CSM}_t$ (Pink).
+              </p>
+            </div>
+            <span class="px-2 py-0.5 text-[10px] font-mono rounded-full bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20">
+              GMM / BBA
+            </span>
+          </div>
+          <div ref="ifrs17LrcChartRef" class="w-full h-80"></div>
+        </div>
+
+        <!-- 2. Income Statement Waterfall Chart -->
+        <div class="neon-glass rounded-2xl p-5 border border-white/[0.08]">
+          <div class="flex items-center justify-between mb-2">
+            <div>
+              <h3 class="text-sm font-bold text-white tracking-wide">
+                IFRS 17 Insurance Service Revenue & P&L Waterfall
+              </h3>
+              <p class="text-xs text-slate-400 font-mono">
+                Revenue release (Green), Claims outgo (Red), Expenses (Orange), and CSM release (Pink).
+              </p>
+            </div>
+          </div>
+          <div ref="ifrs17PnlChartRef" class="w-full h-80"></div>
+        </div>
+      </div>
+
+      <!-- IFRS 17 Balance Sheet & Income Statement Schedules -->
+      <div v-if="ifrs17Data" class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Schedule 1: Balance Sheet (LRC) -->
+        <div class="neon-glass rounded-2xl p-5 border border-white/[0.08]">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="text-sm font-bold text-white tracking-wide">
+                Balance Sheet Schedule (LRC Roll-Forward)
+              </h3>
+              <p class="text-xs text-slate-400 font-mono">
+                Closing carrying amounts at each reporting period.
+              </p>
+            </div>
+          </div>
+
+          <div class="overflow-x-auto border border-white/[0.08] rounded-xl max-h-[380px]">
+            <table class="min-w-full text-left text-xs divide-y divide-white/[0.08] font-mono">
+              <thead class="bg-[#0b0f19] text-slate-300 sticky top-0 z-10">
+                <tr>
+                  <th class="px-3 py-2">Duration</th>
+                  <th class="px-3 py-2">BEL</th>
+                  <th class="px-3 py-2">Risk Adj (RA)</th>
+                  <th class="px-3 py-2">CSM</th>
+                  <th class="px-3 py-2">Total LRC</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-white/[0.04] bg-[#070b14]/60 text-slate-300">
+                <tr v-for="row in ifrs17Data.balance_sheet_schedule" :key="row.duration" class="hover:bg-white/[0.04]">
+                  <td class="px-3 py-2 text-fuchsia-400 font-bold">t={{ row.duration }}</td>
+                  <td class="px-3 py-2 text-sky-300">{{ formatCurrency(row.bel) }}</td>
+                  <td class="px-3 py-2 text-amber-300">{{ formatCurrency(row.risk_adjustment) }}</td>
+                  <td class="px-3 py-2 text-rose-300 font-bold">{{ formatCurrency(row.csm) }}</td>
+                  <td class="px-3 py-2 text-white font-bold">{{ formatCurrency(row.total_lrc) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Schedule 2: Income Statement (P&L) -->
+        <div class="neon-glass rounded-2xl p-5 border border-white/[0.08]">
+          <div class="flex items-center justify-between mb-4">
+            <div>
+              <h3 class="text-sm font-bold text-white tracking-wide">
+                Income Statement Schedule (P&L Recognition)
+              </h3>
+              <p class="text-xs text-slate-400 font-mono">
+                Insurance revenue, claims, and CSM amortization.
+              </p>
+            </div>
+          </div>
+
+          <div class="overflow-x-auto border border-white/[0.08] rounded-xl max-h-[380px]">
+            <table class="min-w-full text-left text-xs divide-y divide-white/[0.08] font-mono">
+              <thead class="bg-[#0b0f19] text-slate-300 sticky top-0 z-10">
+                <tr>
+                  <th class="px-3 py-2">Year</th>
+                  <th class="px-3 py-2">Insurance Revenue</th>
+                  <th class="px-3 py-2">Service Expenses</th>
+                  <th class="px-3 py-2">CSM Release</th>
+                  <th class="px-3 py-2">Service Result</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-white/[0.04] bg-[#070b14]/60 text-slate-300">
+                <tr v-for="row in ifrs17Data.income_statement_schedule" :key="row.year" class="hover:bg-white/[0.04]">
+                  <td class="px-3 py-2 text-emerald-400 font-bold">Yr {{ row.year + 1 }}</td>
+                  <td class="px-3 py-2 text-emerald-300">{{ formatCurrency(row.insurance_revenue) }}</td>
+                  <td class="px-3 py-2 text-rose-300">{{ formatCurrency(row.insurance_service_expenses) }}</td>
+                  <td class="px-3 py-2 text-fuchsia-300 font-bold">{{ formatCurrency(row.csm_amortization) }}</td>
+                  <td :class="['px-3 py-2 font-bold', row.insurance_service_result >= 0 ? 'text-emerald-400' : 'text-rose-400']">
+                    {{ formatCurrency(row.insurance_service_result) }}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ──────────────────────────────────────────────────────────── -->
+    <!-- 6. PORTFOLIO BATCH WORKSPACE TAB -->
     <!-- ──────────────────────────────────────────────────────────── -->
     <section v-if="activeTab === 'portfolio'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 relative z-10 space-y-6">
       <!-- Upload & Configuration Banner -->
@@ -1180,9 +1526,9 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 6. Hero Visualizer Card (Showcase Bar Chart for Single Contract) -->
+    <!-- 7. Hero Visualizer Card (Showcase Bar Chart for Single Contract) -->
     <!-- ──────────────────────────────────────────────────────────── -->
-    <section v-if="activeTab !== 'portfolio'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 relative z-10">
+    <section v-if="activeTab !== 'portfolio' && activeTab !== 'ifrs17'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 relative z-10">
       <div class="neon-border-gradient shadow-2xl">
         <div class="p-6 grid grid-cols-1 lg:grid-cols-3 gap-6 items-center">
           <!-- Left: Big Neon Chart -->
@@ -1249,9 +1595,9 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 7. Top KPI Metric Cards Strip -->
+    <!-- 8. Top KPI Metric Cards Strip -->
     <!-- ──────────────────────────────────────────────────────────── -->
-    <section v-if="activeTab !== 'portfolio'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 relative z-10">
+    <section v-if="activeTab !== 'portfolio' && activeTab !== 'ifrs17'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 relative z-10">
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <!-- Metric 1 -->
         <div class="neon-glass rounded-2xl p-4 border border-white/[0.08] relative overflow-hidden group hover:border-sky-500/40 transition">
@@ -1308,9 +1654,9 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 8. Main Workspace Layout (Sidebar Controls + Multi-Chart Workspace) -->
+    <!-- 9. Main Workspace Layout (Sidebar Controls + Multi-Chart Workspace) -->
     <!-- ──────────────────────────────────────────────────────────── -->
-    <section v-if="activeTab !== 'portfolio'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 relative z-10">
+    <section v-if="activeTab !== 'portfolio' && activeTab !== 'ifrs17'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 relative z-10">
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <!-- Control Deck Sidebar (1/3) -->
         <div class="lg:col-span-1 space-y-6">
@@ -1631,7 +1977,7 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 9. Custom Mortality Table Upload Modal -->
+    <!-- 10. Custom Mortality Table Upload Modal -->
     <!-- ──────────────────────────────────────────────────────────── -->
     <div v-if="showTableModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
       <div class="neon-glass border border-white/[0.15] rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
@@ -1719,12 +2065,14 @@ onUnmounted(() => {
     </div>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 10. Footer -->
+    <!-- 11. Footer -->
     <!-- ──────────────────────────────────────────────────────────── -->
     <footer class="border-t border-white/[0.08] bg-[#030712] py-6 mt-12 relative z-10">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between text-xs font-mono text-slate-500 gap-2">
         <div class="flex items-center space-x-2">
           <span class="text-fuchsia-400">ACTUARY ENGINE</span>
+          <span>•</span>
+          <span>IFRS 17 / PSAK 117</span>
           <span>•</span>
           <span>Dynamic Mortality Tables</span>
           <span>•</span>
