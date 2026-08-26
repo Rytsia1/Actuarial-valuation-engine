@@ -17,6 +17,7 @@ import {
   ActuaryApiError,
 } from './services/actuaryApi'
 import { connectSimulationSocket } from './services/simulationSocket'
+import StressTestDashboard from './components/StressTestDashboard.vue'
 
 // ────────────────────────────────────────────────────────────
 // Reactive Dashboard State
@@ -1354,97 +1355,46 @@ onUnmounted(() => {
       <!-- ═══════════════════════════════════════════════════════ -->
       <!-- SENSITIVITY & STRESS TESTING TAB                       -->
       <!-- ═══════════════════════════════════════════════════════ -->
-      <section v-if="activeTab === 'sensitivity'" class="px-6 py-4 space-y-5">
-        <!-- Baseline KPI Strip -->
-        <div v-if="sensitivityData?.baseline" class="grid grid-cols-2 lg:grid-cols-5 gap-4">
-          <div class="card p-4">
-            <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Duration</div>
-            <div class="text-xl font-semibold text-sky-400 mt-1 font-mono">{{ sensitivityData.baseline.effective_duration }} yrs</div>
-            <div class="text-[10px] text-slate-500 mt-1">Modified Duration</div>
-          </div>
-          <div class="card p-4">
-            <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">DV01</div>
-            <div class="text-xl font-semibold text-amber-400 mt-1 font-mono">{{ formatCurrency(sensitivityData.baseline.dv01) }}</div>
-            <div class="text-[10px] text-slate-500 mt-1">Per 1 bp shift</div>
-          </div>
-          <div class="card p-4">
-            <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Convexity</div>
-            <div class="text-xl font-semibold text-indigo-400 mt-1 font-mono">{{ sensitivityData.baseline.effective_convexity }}</div>
-            <div class="text-[10px] text-slate-500 mt-1">Curvature</div>
-          </div>
-          <div class="card p-4">
-            <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">PV Benefits</div>
-            <div class="text-xl font-semibold text-rose-400 mt-1 font-mono">{{ formatCurrency(sensitivityData.baseline.pv_future_benefits) }}</div>
-            <div class="text-[10px] text-slate-500 mt-1">Claims + Maturities</div>
-          </div>
-          <div class="card p-4">
-            <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Base BEL</div>
-            <div class="text-xl font-semibold text-emerald-400 mt-1 font-mono">{{ formatCurrency(sensitivityData.baseline.base_reserve) }}</div>
-            <div class="text-[10px] text-slate-500 mt-1">Net Reserve</div>
-          </div>
-        </div>
+      <section v-if="activeTab === 'sensitivity'" class="px-6 py-4 space-y-6">
+        <!-- Interactive Real-Time Stress Testing Sliders & Trajectory -->
+        <StressTestDashboard :contract-form="form" />
 
-        <!-- Tornado Chart -->
-        <div v-if="sensitivityData" class="card p-5">
-          <div class="flex items-center justify-between mb-3 pb-3 border-b border-white/[0.06]">
+        <!-- Compound Macro-Scenarios -->
+        <div v-if="sensitivityData" class="card p-5 space-y-3">
+          <div class="flex items-center justify-between pb-2 border-b border-white/[0.06]">
             <div>
-              <h3 class="text-sm font-semibold text-white">Tornado Sensitivity Chart</h3>
-              <p class="text-[11px] text-slate-500">Ranked by total delta swing — Blue = Downside, Rose = Upside</p>
+              <h3 class="text-sm font-semibold text-white">Standard Compound Regulatory & Macro Stress Scenarios</h3>
+              <p class="text-[11px] text-slate-500">Joint shocks evaluating severe economic & demographic downturns</p>
             </div>
-            <span class="badge badge-info">OAT</span>
+            <span class="badge badge-warning">ERM Matrix</span>
           </div>
-          <div ref="tornadoChartRef" class="w-full h-96"></div>
-        </div>
-
-        <!-- Compound Scenarios & OAT Tables -->
-        <div v-if="sensitivityData" class="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          <div class="card p-5">
-            <h3 class="text-sm font-semibold text-white mb-1">Compound Stress Scenarios</h3>
-            <p class="text-[11px] text-slate-500 mb-3">Joint financial &amp; demographic shocks</p>
-            <div class="overflow-x-auto card-inset rounded-lg max-h-[380px]">
-              <table class="data-table">
-                <thead>
-                  <tr><th>Scenario</th><th>Shocked Reserve</th><th>Delta</th><th>Impact</th></tr>
-                </thead>
-                <tbody>
-                  <tr v-for="sc in sensitivityData.combined_scenarios" :key="sc.scenario_id">
-                    <td>
-                      <div class="font-semibold text-white text-[11px]">{{ sc.name }}</div>
-                      <div class="text-[10px] text-slate-500">{{ sc.description }}</div>
-                    </td>
-                    <td class="text-sky-400 font-semibold">{{ formatCurrency(sc.shocked_reserve) }}</td>
-                    <td :class="sc.delta_reserve > 0 ? 'text-rose-400 font-semibold' : 'text-emerald-400 font-semibold'">
-                      {{ sc.delta_reserve > 0 ? '+' : '' }}{{ formatCurrency(sc.delta_reserve) }}
-                    </td>
-                    <td>
-                      <span :class="['badge', sc.solvency_impact === 'HIGH RISK' ? 'badge-danger' : sc.solvency_impact === 'MODERATE RISK' ? 'badge-warning' : 'badge-success']">
-                        {{ sc.solvency_impact }}
-                      </span>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-
-          <div class="card p-5">
-            <h3 class="text-sm font-semibold text-white mb-1">OAT Sensitivity Table</h3>
-            <p class="text-[11px] text-slate-500 mb-3">Individual factor delta bounds</p>
-            <div class="overflow-x-auto card-inset rounded-lg max-h-[380px]">
-              <table class="data-table">
-                <thead>
-                  <tr><th>Risk Factor</th><th>Low Shock</th><th>High Shock</th><th>Swing</th></tr>
-                </thead>
-                <tbody>
-                  <tr v-for="item in sensitivityData.tornado_items" :key="item.risk_factor">
-                    <td class="text-white font-semibold">{{ item.risk_factor }}</td>
-                    <td class="text-emerald-400">{{ formatCurrency(item.low_reserve) }}</td>
-                    <td class="text-rose-400">{{ formatCurrency(item.high_reserve) }}</td>
-                    <td class="text-sky-400 font-semibold">{{ formatCurrency(item.swing) }} <span class="text-slate-500 text-[10px]">({{ item.swing_pct }}%)</span></td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+          <div class="overflow-x-auto card-inset rounded-lg max-h-[380px]">
+            <table class="data-table">
+              <thead>
+                <tr><th>Scenario</th><th>Rate Shift</th><th>Mortality</th><th>Lapse</th><th>Expense</th><th>Shocked Reserve</th><th>Delta ($)</th><th>Solvency Risk</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="sc in sensitivityData.combined_scenarios" :key="sc.scenario_id">
+                  <td>
+                    <div class="font-semibold text-white text-[11px]">{{ sc.name }}</div>
+                    <div class="text-[10px] text-slate-500">{{ sc.description }}</div>
+                  </td>
+                  <td class="font-mono text-sky-400">{{ sc.rate_shift_bps > 0 ? '+' : '' }}{{ sc.rate_shift_bps }} bps</td>
+                  <td class="font-mono text-slate-300">{{ (sc.mortality_multiplier * 100).toFixed(0) }}%</td>
+                  <td class="font-mono text-slate-300">{{ (sc.lapse_multiplier * 100).toFixed(0) }}%</td>
+                  <td class="font-mono text-slate-300">{{ (sc.expense_multiplier * 100).toFixed(0) }}%</td>
+                  <td class="text-sky-400 font-semibold font-mono">{{ formatCurrency(sc.shocked_reserve) }}</td>
+                  <td :class="['font-mono font-semibold', sc.delta_reserve > 0 ? 'text-rose-400' : 'text-emerald-400']">
+                    {{ sc.delta_reserve > 0 ? '+' : '' }}{{ formatCurrency(sc.delta_reserve) }} ({{ formatPercent(sc.delta_pct) }})
+                  </td>
+                  <td>
+                    <span :class="['badge', sc.solvency_impact === 'HIGH RISK' ? 'badge-danger' : sc.solvency_impact === 'MODERATE RISK' ? 'badge-warning' : 'badge-success']">
+                      {{ sc.solvency_impact }}
+                    </span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
         </div>
       </section>

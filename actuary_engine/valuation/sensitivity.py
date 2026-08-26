@@ -454,3 +454,240 @@ class SensitivityEngine:
             )
 
         return results
+
+    def run_realtime_stress_test(
+        self,
+        contract: PolicyContract,
+        shocks: dict[str, float],
+        gross_premium: Optional[float] = None,
+    ) -> dict[str, Any]:
+        """Execute interactive real-time stress testing with custom slider shocks.
+
+        Computes:
+        - Baseline vs. Stressed overall BEL and delta metrics.
+        - Detailed duration-by-duration reserve trajectory comparison.
+        - Dynamic Tornado sensitivity items including slider positions.
+        - Duration, convexity, and DV01 indicators.
+
+        Args:
+            contract: PolicyContract specification.
+            shocks: Dictionary with 'interest_rate_bps', 'mortality_multiplier',
+                   'lapse_multiplier', 'expense_inflation_pct'.
+            gross_premium: Optional gross premium override.
+
+        Returns:
+            Dictionary payload ready for StressTestResponse serialization.
+        """
+        # 1. Parse Shocks
+        ir_bps = float(shocks.get("interest_rate_bps", 0.0))
+        mort_mult = float(shocks.get("mortality_multiplier", 1.0))
+        lapse_mult = float(shocks.get("lapse_multiplier", 1.0))
+        exp_infl_pct = float(shocks.get("expense_inflation_pct", 0.0))
+        exp_mult = 1.0 + (exp_infl_pct / 100.0)
+
+        # 2. Determine Effective Gross Premium
+        eff_gp = gross_premium
+        if eff_gp is None:
+            comm = CommutationFunctions(self.table, self.interest)
+            pricer = LevelPremiumCalculator(comm)
+            net_res = pricer.price_contract(contract)
+            eff_gp = net_res.annual_premium * 1.20
+
+        # 3. Baseline Valuation & Trajectory
+        gpv_base = GrossPremiumValuation(
+            table=self.table,
+            interest=self.interest,
+            expense=self.expense,
+            lapse=self.lapse,
+        )
+        cf_base = gpv_base.project(contract, eff_gp)
+        res_base = gpv_base.gross_reserve_profile(contract, eff_gp)
+        v_base = float(cf_base["pv_net_liability"].sum())
+        abs_base = max(1.0, abs(v_base))
+
+        # 4. Stressed Assumptions & Trajectory
+        base_rate = getattr(self.interest, "annual_rate", 0.05)
+        shocked_rate = max(0.0001, base_rate + (ir_bps / 10000.0))
+        shocked_interest = InterestAssumption(annual_rate=shocked_rate)
+
+        if mort_mult != 1.0:
+            qx_shocked = np.clip(self.table.qx * mort_mult, 0.0, 1.0)
+            qx_shocked[-1] = 1.0
+            shocked_table = MortalityTable(
+                ages=self.table.ages,
+                qx=qx_shocked,
+                name=f"{self.table.name}_shocked",
+                radix=self.table.radix,
+            )
+        else:
+            shocked_table = self.table
+
+        if exp_mult != 1.0:
+            shocked_expense = ExpenseAssumption(
+                percent_of_premium_first=min(1.0, self.expense.percent_of_premium_first * exp_mult),
+                percent_of_premium_renewal=min(1.0, self.expense.percent_of_premium_renewal * exp_mult),
+                per_policy_first=self.expense.per_policy_first * exp_mult,
+                per_policy_renewal=self.expense.per_policy_renewal * exp_mult,
+            )
+        else:
+            shocked_expense = self.expense
+
+        if lapse_mult != 1.0:
+            if self.lapse.duration_rates is not None:
+                dur_rates = [min(0.95, r * lapse_mult) for r in self.lapse.duration_rates]
+                shocked_lapse = LapseAssumption(
+                    flat_annual_rate=min(0.95, self.lapse.flat_annual_rate * lapse_mult),
+                    duration_rates=dur_rates,
+                )
+            else:
+                shocked_lapse = LapseAssumption(
+                    flat_annual_rate=min(0.95, self.lapse.flat_annual_rate * lapse_mult),
+                )
+        else:
+            shocked_lapse = self.lapse
+
+        gpv_stress = GrossPremiumValuation(
+            table=shocked_table,
+            interest=shocked_interest,
+            expense=shocked_expense,
+            lapse=shocked_lapse,
+        )
+        cf_stress = gpv_stress.project(contract, eff_gp)
+        res_stress = gpv_stress.gross_reserve_profile(contract, eff_gp)
+        v_stress = float(cf_stress["pv_net_liability"].sum())
+
+        delta_res = v_stress - v_base
+        delta_pct = (delta_res / abs_base) * 100.0
+
+        # 5. Build Duration-by-Duration Reserve Trajectory
+        trajectory: list[dict[str, Any]] = []
+        n_dur = len(res_base)
+        for t in range(n_dur):
+            dur = int(res_base.iloc[t]["duration"])
+            age = int(res_base.iloc[t]["age"])
+            b_r = float(res_base.iloc[t]["gross_reserve"])
+            s_r = float(res_stress.iloc[t]["gross_reserve"]) if t < len(res_stress) else 0.0
+            b_c = float(cf_base.iloc[t]["net_liability_cf"]) if t < len(cf_base) else 0.0
+            s_c = float(cf_stress.iloc[t]["net_liability_cf"]) if t < len(cf_stress) else 0.0
+
+            trajectory.append({
+                "duration": dur,
+                "year": dur,
+                "age": age,
+                "baseline_reserve": round(b_r, 2),
+                "stressed_reserve": round(s_r, 2),
+                "delta_reserve": round(s_r - b_r, 2),
+                "baseline_net_cf": round(b_c, 2),
+                "stressed_net_cf": round(s_c, 2),
+            })
+
+        # 6. Compute Key Risk Metrics (Duration & DV01)
+        delta_i = 0.01  # 100 bps
+        res_plus_i = self.evaluate_point(contract, gross_premium=eff_gp, interest_shift=delta_i)
+        res_minus_i = self.evaluate_point(contract, gross_premium=eff_gp, interest_shift=-delta_i)
+        pv_outgo_base = float(cf_base["pv_death_claims"].sum() + cf_base["pv_maturity"].sum() + cf_base["pv_expense"].sum())
+        pv_outgo_plus = res_plus_i["pvfb"] + res_plus_i["pvfe"]
+        pv_outgo_minus = res_minus_i["pvfb"] + res_minus_i["pvfe"]
+
+        eff_duration = -(pv_outgo_plus - pv_outgo_minus) / (2.0 * delta_i * max(1.0, pv_outgo_base))
+        eff_convexity = (pv_outgo_plus + pv_outgo_minus - 2.0 * pv_outgo_base) / ((delta_i ** 2) * max(1.0, pv_outgo_base))
+        dv01 = abs(pv_outgo_minus - pv_outgo_plus) / 200.0
+
+        # 7. Compute Dynamic Tornado Data (OAT Sensitivity for Sliders)
+        tornado_defs = [
+            {
+                "risk_factor": "Interest Rate Shift",
+                "category": "MARKET",
+                "low_label": "-200 bps",
+                "high_label": "+200 bps",
+                "low_kwargs": {"interest_shift": -0.02},
+                "high_kwargs": {"interest_shift": +0.02},
+                "current_label": f"{ir_bps:+.0f} bps",
+                "current_kwargs": {"interest_shift": ir_bps / 10000.0},
+            },
+            {
+                "risk_factor": "Mortality Multiplier",
+                "category": "MORTALITY",
+                "low_label": "50% qx",
+                "high_label": "200% qx",
+                "low_kwargs": {"mortality_mult": 0.50},
+                "high_kwargs": {"mortality_mult": 2.00},
+                "current_label": f"{mort_mult * 100:.0f}%",
+                "current_kwargs": {"mortality_mult": mort_mult},
+            },
+            {
+                "risk_factor": "Lapse Rate Shock",
+                "category": "POLICYHOLDER",
+                "low_label": "50% Lapse",
+                "high_label": "200% Lapse",
+                "low_kwargs": {"lapse_mult": 0.50},
+                "high_kwargs": {"lapse_mult": 2.00},
+                "current_label": f"{lapse_mult * 100:.0f}%",
+                "current_kwargs": {"lapse_mult": lapse_mult},
+            },
+            {
+                "risk_factor": "Expense Inflation",
+                "category": "EXPENSE",
+                "low_label": "0% Base",
+                "high_label": "+15% Inflation",
+                "low_kwargs": {"expense_mult": 1.00},
+                "high_kwargs": {"expense_mult": 1.15},
+                "current_label": f"{exp_infl_pct:+.1f}%",
+                "current_kwargs": {"expense_mult": exp_mult},
+            },
+        ]
+
+        tornado_items: list[dict[str, Any]] = []
+        for item in tornado_defs:
+            l_eval = self.evaluate_point(contract, gross_premium=eff_gp, **item["low_kwargs"])
+            h_eval = self.evaluate_point(contract, gross_premium=eff_gp, **item["high_kwargs"])
+            c_eval = self.evaluate_point(contract, gross_premium=eff_gp, **item["current_kwargs"])
+
+            v_l = l_eval["reserve"]
+            v_h = h_eval["reserve"]
+            v_c = c_eval["reserve"]
+
+            delta_l = v_l - v_base
+            delta_h = v_h - v_base
+            delta_c = v_c - v_base
+            swing = abs(v_h - v_l)
+            swing_pct = (swing / abs_base) * 100.0
+
+            tornado_items.append({
+                "risk_factor": item["risk_factor"],
+                "category": item["category"],
+                "low_label": item["low_label"],
+                "high_label": item["high_label"],
+                "low_reserve": round(v_l, 2),
+                "high_reserve": round(v_h, 2),
+                "low_delta": round(delta_l, 2),
+                "high_delta": round(delta_h, 2),
+                "low_delta_pct": round((delta_l / abs_base) * 100.0, 2),
+                "high_delta_pct": round((delta_h / abs_base) * 100.0, 2),
+                "current_label": item["current_label"],
+                "current_reserve": round(v_c, 2),
+                "current_delta": round(delta_c, 2),
+                "current_delta_pct": round((delta_c / abs_base) * 100.0, 2),
+                "swing": round(swing, 2),
+                "swing_pct": round(swing_pct, 2),
+            })
+
+        tornado_items.sort(key=lambda x: x["swing"], reverse=True)
+
+        return {
+            "baseline_reserve": round(v_base, 2),
+            "stressed_reserve": round(v_stress, 2),
+            "delta_reserve": round(delta_res, 2),
+            "delta_pct": round(delta_pct, 2),
+            "effective_duration": round(eff_duration, 3),
+            "dv01": round(dv01, 2),
+            "effective_convexity": round(eff_convexity, 3),
+            "shocks_applied": {
+                "interest_rate_bps": ir_bps,
+                "mortality_multiplier": mort_mult,
+                "lapse_multiplier": lapse_mult,
+                "expense_inflation_pct": exp_infl_pct,
+            },
+            "tornado_data": tornado_items,
+            "reserve_trajectory": trajectory,
+        }

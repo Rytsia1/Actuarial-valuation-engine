@@ -372,5 +372,61 @@ class SensitivityResponse(BaseModel):
     combined_scenarios: list[dict[str, Any]]
 
 
+class StressTestShocks(BaseModel):
+    """Real-time shock parameters for interactive sliders."""
+
+    interest_rate_bps: float = Field(
+        default=0.0, ge=-500.0, le=500.0, description="Parallel shift in interest rate in bps (-200 to +200 bps)."
+    )
+    mortality_multiplier: float = Field(
+        default=1.0, ge=0.1, le=5.0, description="Mortality scaling multiplier (0.5 to 2.0 = 50% - 200%)."
+    )
+    lapse_multiplier: float = Field(
+        default=1.0, ge=0.1, le=5.0, description="Lapse scaling multiplier (0.5 to 2.0 = 50% - 200%)."
+    )
+    expense_inflation_pct: float = Field(
+        default=0.0, ge=0.0, le=50.0, description="Expense inflation percentage (0.0% to 15.0%)."
+    )
+
+
+class StressTestRequest(BaseModel):
+    """Request payload for real-time stress testing sliders."""
+
+    contract_id: Optional[str] = Field(default=None, description="Optional contract identifier.")
+    product_type: str = Field(default="endowment", description="Product line (term, endowment, whole_life, pure_endowment).")
+    issue_age: int = Field(default=30, ge=0, le=100, description="Age at policy issuance.")
+    term: Optional[int] = Field(default=20, ge=1, le=80, description="Policy coverage term in years.")
+    sum_assured: float = Field(default=1_000_000.0, gt=0.0, description="Sum assured / Face amount.")
+    premium_paying_term: Optional[int] = Field(default=None, ge=1, description="Premium payment duration.")
+    interest_rate: float = Field(default=0.05, gt=0.0, le=0.50, description="Baseline valuation discount rate.")
+    gross_premium: Optional[float] = Field(default=None, gt=0.0, description="Annual gross premium (auto-priced if omitted).")
+    table_id: str = Field(default="soa_ilt", description="Mortality table identifier.")
+    expense: Optional[ExpenseAssumption] = Field(default=None, description="Baseline expense loadings.")
+    lapse: Optional[LapseAssumption] = Field(default=None, description="Baseline lapse decrement rates.")
+    base_assumptions: Optional[dict[str, Any]] = Field(default=None, description="Optional dictionary of base assumptions.")
+    shocks: StressTestShocks = Field(
+        default_factory=StressTestShocks, description="Real-time shock parameters."
+    )
+
+
+class StressTestResponse(BaseModel):
+    """Response payload for real-time stress testing sliders."""
+
+    table_id: str
+    table_name: str
+    product_type: str
+    sum_assured: float
+    baseline_reserve: float
+    stressed_reserve: float
+    delta_reserve: float
+    delta_pct: float
+    effective_duration: float
+    dv01: float
+    effective_convexity: float
+    shocks_applied: dict[str, float]
+    tornado_data: list[dict[str, Any]]
+    reserve_trajectory: list[dict[str, Any]]
+
+
 
 

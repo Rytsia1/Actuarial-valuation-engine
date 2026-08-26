@@ -170,3 +170,62 @@ class TestSensitivityAPI:
         }
         response = client.post("/api/v1/valuation/sensitivity/tornado", json=payload)
         assert response.status_code == 404
+
+    def test_stress_test_sliders_endpoint(self) -> None:
+        """Test the real-time stress testing sliders endpoint."""
+        client = TestClient(app)
+        payload = {
+            "product_type": "endowment",
+            "issue_age": 30,
+            "term": 20,
+            "sum_assured": 1_000_000.0,
+            "interest_rate": 0.05,
+            "table_id": "soa_ilt",
+            "shocks": {
+                "interest_rate_bps": -100.0,
+                "mortality_multiplier": 1.20,
+                "lapse_multiplier": 1.50,
+                "expense_inflation_pct": 5.0,
+            },
+        }
+
+        response = client.post("/api/v1/valuation/stress-test", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+
+        assert "baseline_reserve" in data
+        assert "stressed_reserve" in data
+        assert "delta_reserve" in data
+        assert "reserve_trajectory" in data
+        assert len(data["reserve_trajectory"]) == 21  # t=0..20 (21 points)
+        assert len(data["tornado_data"]) == 4  # 4 slider risk factors
+        assert data["shocks_applied"]["interest_rate_bps"] == -100.0
+        assert data["shocks_applied"]["mortality_multiplier"] == 1.20
+
+    def test_stress_test_sliders_with_base_assumptions(self) -> None:
+        """Test stress testing endpoint with base_assumptions dict."""
+        client = TestClient(app)
+        payload = {
+            "contract_id": "POL-1001",
+            "base_assumptions": {
+                "product_type": "term",
+                "issue_age": 35,
+                "term": 15,
+                "sum_assured": 500_000.0,
+                "interest_rate": 0.045,
+                "table_id": "soa_ilt",
+            },
+            "shocks": {
+                "interest_rate_bps": 50.0,
+                "mortality_multiplier": 1.0,
+                "lapse_multiplier": 1.0,
+                "expense_inflation_pct": 0.0,
+            },
+        }
+
+        response = client.post("/api/v1/valuation/stress-test", json=payload)
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["product_type"] == "term"
+        assert len(data["reserve_trajectory"]) == 16  # t=0..15 (16 points)

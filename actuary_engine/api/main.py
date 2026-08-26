@@ -45,6 +45,8 @@ from actuary_engine.api.schemas import (
     SensitivityResponse,
     StochasticValuationRequest,
     StochasticValuationResponse,
+    StressTestRequest,
+    StressTestResponse,
     TableListItem,
     TableUploadResponse,
     TerminalDistribution,
@@ -1016,6 +1018,73 @@ def evaluate_sensitivity_tornado(request: SensitivityRequest) -> SensitivityResp
     except Exception as e:
         logger.exception("Sensitivity analysis failed: %s", e)
         raise HTTPException(status_code=500, detail=f"Sensitivity analysis error: {e}") from e
+
+
+@app.post("/api/v1/valuation/stress-test", response_model=StressTestResponse)
+def evaluate_stress_test_sliders(request: StressTestRequest) -> StressTestResponse:
+    """Run real-time interactive stress testing with custom slider shocks."""
+    base_assump = request.base_assumptions or {}
+    table_id = base_assump.get("table_id") or request.table_id or "soa_ilt"
+    try:
+        table = table_registry.get_table(table_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"Mortality table '{table_id}' not found.") from None
+
+    try:
+        prod_type = base_assump.get("product_type") or request.product_type
+        issue_age = int(base_assump.get("issue_age") or request.issue_age)
+        term = base_assump.get("term") if "term" in base_assump else request.term
+        sum_assured = float(base_assump.get("sum_assured") or request.sum_assured)
+        prem_term = base_assump.get("premium_paying_term") or request.premium_paying_term
+        interest_rate = float(base_assump.get("interest_rate") or request.interest_rate)
+        gross_prem = base_assump.get("gross_premium") if "gross_premium" in base_assump else request.gross_premium
+
+        contract = PolicyContract(
+            product_type=prod_type,
+            issue_age=issue_age,
+            term=term,
+            sum_assured=sum_assured,
+            premium_paying_term=prem_term,
+        )
+        interest = InterestAssumption(annual_rate=interest_rate)
+        expense = request.expense or ExpenseAssumption()
+        lapse = request.lapse or LapseAssumption()
+
+        engine = SensitivityEngine(
+            table=table,
+            interest=interest,
+            expense=expense,
+            lapse=lapse,
+        )
+
+        shocks_dict = request.shocks.model_dump() if hasattr(request.shocks, "model_dump") else dict(request.shocks)
+        res = engine.run_realtime_stress_test(
+            contract=contract,
+            shocks=shocks_dict,
+            gross_premium=gross_prem,
+        )
+
+        return StressTestResponse(
+            table_id=table_id,
+            table_name=table.name,
+            product_type=str(prod_type),
+            sum_assured=sum_assured,
+            baseline_reserve=res["baseline_reserve"],
+            stressed_reserve=res["stressed_reserve"],
+            delta_reserve=res["delta_reserve"],
+            delta_pct=res["delta_pct"],
+            effective_duration=res["effective_duration"],
+            dv01=res["dv01"],
+            effective_convexity=res["effective_convexity"],
+            shocks_applied=res["shocks_applied"],
+            tornado_data=res["tornado_data"],
+            reserve_trajectory=res["reserve_trajectory"],
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except Exception as e:
+        logger.exception("Real-time stress test valuation failed: %s", e)
+        raise HTTPException(status_code=500, detail=f"Stress test valuation error: {e}") from e
 
 
 

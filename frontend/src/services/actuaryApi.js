@@ -256,5 +256,19 @@ export async function runSensitivityAnalysis(payload) {
   });
 }
 
+/**
+ * Run real-time stress testing with interactive slider shocks
+ * POST /api/v1/valuation/stress-test
+ *
+ * @param {Object} payload - StressTestRequest
+ * @returns {Promise<Object>} StressTestResponse
+ */
+export async function runStressTest(payload) {
+  return await apiRequest('/valuation/stress-test', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
 
 
