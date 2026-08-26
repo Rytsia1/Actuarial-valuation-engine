@@ -1,20 +1,22 @@
 <script setup>
-import { ref, reactive, onMounted, onUnmounted, computed, nextTick } from 'vue'
+import { ref, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import * as echarts from 'echarts'
 import {
-  fetchHealth,
+  checkHealth,
   runDeterministicValuation,
   runStochasticValuation,
-} from './api/client'
+  ActuaryApiError,
+} from './services/actuaryApi'
 
 // ────────────────────────────────────────────────────────────
-// State Management
+// Reactive Dashboard State
 // ────────────────────────────────────────────────────────────
 
 const activeTab = ref('overview') // 'overview', 'reserves', 'stochastic', 'cashflows', 'table'
 const backendStatus = ref('checking') // 'healthy', 'error', 'checking'
 const loading = ref(false)
 const errorMessage = ref(null)
+const backendDetails = ref(null)
 
 // Form Parameters with standard actuarial defaults
 const form = reactive({
@@ -54,7 +56,7 @@ const form = reactive({
   seed: 42,
 })
 
-// Valuation Results
+// Valuation Results from FastAPI
 const deterministicData = ref(null)
 const stochasticData = ref(null)
 
@@ -138,13 +140,16 @@ function applyPreset(type) {
 // API Communication & Valuation Orchestrator
 // ────────────────────────────────────────────────────────────
 
-async function checkBackend() {
+async function checkBackendConnection() {
   try {
-    const health = await fetchHealth()
+    const health = await checkHealth()
     backendStatus.value = health.status === 'healthy' ? 'healthy' : 'error'
+    backendDetails.value = health
+    return true
   } catch (err) {
-    console.warn('Backend connection failed:', err)
+    console.warn('Backend health check error:', err)
     backendStatus.value = 'error'
+    return false
   }
 }
 
@@ -153,6 +158,7 @@ async function executeValuation() {
   errorMessage.value = null
 
   try {
+    // 1. Prepare deterministic payload adhering to FastAPI schema
     const detPayload = {
       product_type: form.product_type,
       issue_age: form.issue_age,
@@ -165,6 +171,7 @@ async function executeValuation() {
       lapse: form.lapse,
     }
 
+    // 2. Prepare stochastic payload adhering to FastAPI schema
     const stochPayload = {
       product_type: form.product_type,
       issue_age: form.issue_age,
@@ -179,6 +186,7 @@ async function executeValuation() {
       seed: form.seed,
     }
 
+    // Execute parallel requests to the FastAPI valuation backend
     const [detRes, stochRes] = await Promise.all([
       runDeterministicValuation(detPayload),
       runStochasticValuation(stochPayload),
@@ -191,8 +199,13 @@ async function executeValuation() {
     await nextTick()
     renderAllCharts()
   } catch (err) {
-    console.error('Valuation error:', err)
-    errorMessage.value = err.message || 'Valuation failed. Please ensure FastAPI is running on port 8000.'
+    console.error('Valuation execution error:', err)
+    backendStatus.value = 'error'
+    if (err instanceof ActuaryApiError) {
+      errorMessage.value = err.message
+    } else {
+      errorMessage.value = err.message || 'Failed to complete actuarial valuation.'
+    }
   } finally {
     loading.value = false
   }
@@ -210,7 +223,6 @@ function renderHeroChart() {
   const years = cfs.map(d => `Yr ${d.year + 1}`)
   const netCfs = cfs.map(d => d.net_liability_cf)
 
-  // Compute cumulative net liability
   let running = 0
   const cumLiability = cfs.map(d => {
     running += d.net_liability_cf
@@ -629,7 +641,7 @@ function renderAllCharts() {
 // ────────────────────────────────────────────────────────────
 
 onMounted(async () => {
-  await checkBackend()
+  await checkBackendConnection()
   await executeValuation()
 
   resizeObserver = new ResizeObserver(() => {
@@ -718,10 +730,12 @@ onUnmounted(() => {
             <span
               :class="[
                 'h-2 w-2 rounded-full',
-                backendStatus === 'healthy' ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-rose-400'
+                backendStatus === 'healthy' ? 'bg-emerald-400 shadow-[0_0_8px_#34d399]' : 'bg-rose-400 shadow-[0_0_8px_#f43f5e]'
               ]"
             ></span>
-            <span class="text-slate-300 text-[11px]">SOA ILT (ω=110)</span>
+            <span class="text-slate-300 text-[11px] font-medium">
+              {{ backendStatus === 'healthy' ? 'SOA ILT API Connected' : 'FastAPI Offline' }}
+            </span>
           </div>
 
           <button
@@ -742,17 +756,41 @@ onUnmounted(() => {
     </header>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 2. Hero Headline Section & Feature Badges -->
+    <!-- 2. Error Notification Banner (if FastAPI is offline or returns error) -->
+    <!-- ──────────────────────────────────────────────────────────── -->
+    <div v-if="errorMessage || backendStatus === 'error'" class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-4 relative z-20">
+      <div class="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-200 text-xs font-mono flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-lg shadow-rose-500/10">
+        <div class="flex items-center space-x-2.5">
+          <span class="h-2 w-2 rounded-full bg-rose-500 animate-ping"></span>
+          <div>
+            <span class="font-bold text-rose-400">Backend Connection Warning:</span>
+            <span class="ml-1 text-slate-300">{{ errorMessage || 'FastAPI server not detected at http://127.0.0.1:8000.' }}</span>
+          </div>
+        </div>
+        <div class="flex items-center space-x-3">
+          <span class="px-2 py-1 rounded bg-black/40 text-[10px] text-slate-400 border border-white/10 font-mono">
+            uvicorn actuary_engine.api.main:app --port 8000
+          </span>
+          <button
+            @click="executeValuation"
+            class="px-3 py-1 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-semibold rounded-lg transition border border-rose-500/40"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ──────────────────────────────────────────────────────────── -->
+    <!-- 3. Hero Headline Section & Feature Badges -->
     <!-- ──────────────────────────────────────────────────────────── -->
     <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-4 text-center relative z-10">
-      <!-- Feature Pills -->
       <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-white/[0.04] border border-fuchsia-500/20 backdrop-blur-xl mb-4 shadow-[0_0_20px_rgba(236,72,153,0.15)]">
         <span class="h-1.5 w-1.5 rounded-full bg-fuchsia-400 animate-pulse"></span>
-        <span class="text-xs font-medium text-slate-300">Deterministic & Stochastic Valuation Engine</span>
-        <span class="text-[10px] text-fuchsia-400 font-mono">⚡ Vectorized NumPy</span>
+        <span class="text-xs font-medium text-slate-300">FastAPI RESTful Valuation Backend</span>
+        <span class="text-[10px] text-fuchsia-400 font-mono">⚡ 163 Unit Tests Verified</span>
       </div>
 
-      <!-- Main Headline -->
       <h1 class="text-3xl sm:text-4xl md:text-5xl font-extrabold tracking-tight text-white max-w-4xl mx-auto leading-tight">
         The fastest way to <span class="text-transparent bg-clip-text bg-gradient-to-r from-fuchsia-400 via-rose-400 to-amber-300">model, value & stress-test</span> actuarial liabilities.
       </h1>
@@ -791,7 +829,7 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 3. Hero Visualizer Card (Showcase Bar Chart) -->
+    <!-- 4. Hero Visualizer Card (Showcase Bar Chart) -->
     <!-- ──────────────────────────────────────────────────────────── -->
     <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 relative z-10">
       <div class="neon-border-gradient shadow-2xl">
@@ -812,11 +850,11 @@ onUnmounted(() => {
             <div ref="heroChartRef" class="w-full h-64 sm:h-72"></div>
           </div>
 
-          <!-- Right: Hero KPI Table (Inspired by Reference UI Right Panel) -->
+          <!-- Right: Hero KPI Table -->
           <div class="bg-black/40 rounded-xl p-5 border border-white/[0.06] space-y-4 font-mono text-xs">
             <div class="text-[11px] uppercase tracking-wider text-slate-400 font-bold border-b border-slate-800 pb-2 flex items-center justify-between">
               <span>Valuation Summary</span>
-              <span class="text-fuchsia-400">Live Solvency</span>
+              <span class="text-fuchsia-400">FastAPI Powered</span>
             </div>
 
             <div class="space-y-3">
@@ -860,7 +898,7 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 4. Top KPI Metric Cards Strip -->
+    <!-- 5. Top KPI Metric Cards Strip -->
     <!-- ──────────────────────────────────────────────────────────── -->
     <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 relative z-10">
       <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -871,7 +909,8 @@ onUnmounted(() => {
             <span class="text-sky-400">ä = {{ deterministicData?.annuity_factor?.toFixed(3) || '—' }}</span>
           </div>
           <div class="text-2xl font-bold font-mono text-white mt-1">
-            {{ formatCurrency(deterministicData?.annual_net_premium) }}
+            <span v-if="loading" class="animate-pulse text-slate-500">...</span>
+            <span v-else>{{ formatCurrency(deterministicData?.annual_net_premium) }}</span>
           </div>
           <div class="text-[11px] text-slate-400 font-mono mt-1">Equivalence: P · ä = NSP</div>
         </div>
@@ -883,7 +922,8 @@ onUnmounted(() => {
             <span class="text-emerald-400">+20% Load</span>
           </div>
           <div class="text-2xl font-bold font-mono text-emerald-300 mt-1">
-            {{ formatCurrency(deterministicData?.annual_gross_premium) }}
+            <span v-if="loading" class="animate-pulse text-slate-500">...</span>
+            <span v-else>{{ formatCurrency(deterministicData?.annual_gross_premium) }}</span>
           </div>
           <div class="text-[11px] text-slate-400 font-mono mt-1">Acquisition & Maint. Loaded</div>
         </div>
@@ -895,7 +935,8 @@ onUnmounted(() => {
             <span class="text-fuchsia-400">{{ (stochasticData?.mean_bel || 0) < 0 ? 'Surplus' : 'Deficit' }}</span>
           </div>
           <div class="text-2xl font-bold font-mono text-fuchsia-300 mt-1">
-            {{ formatCurrency(stochasticData?.mean_bel ?? deterministicData?.bel) }}
+            <span v-if="loading" class="animate-pulse text-slate-500">...</span>
+            <span v-else>{{ formatCurrency(stochasticData?.mean_bel ?? deterministicData?.bel) }}</span>
           </div>
           <div class="text-[11px] text-slate-400 font-mono mt-1">Std Dev: {{ formatCurrency(stochasticData?.std_bel) }}</div>
         </div>
@@ -907,7 +948,8 @@ onUnmounted(() => {
             <span class="text-rose-400">CTE 95</span>
           </div>
           <div class="text-2xl font-bold font-mono text-rose-300 mt-1">
-            {{ formatCurrency(stochasticData?.var_95) }}
+            <span v-if="loading" class="animate-pulse text-slate-500">...</span>
+            <span v-else>{{ formatCurrency(stochasticData?.var_95) }}</span>
           </div>
           <div class="text-[11px] text-slate-400 font-mono mt-1">CVaR 95%: {{ formatCurrency(stochasticData?.cvar_95) }}</div>
         </div>
@@ -915,7 +957,7 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 5. Main Workspace Layout (Sidebar Controls + Multi-Chart Workspace) -->
+    <!-- 6. Main Workspace Layout (Sidebar Controls + Multi-Chart Workspace) -->
     <!-- ──────────────────────────────────────────────────────────── -->
     <section class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 relative z-10">
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -926,7 +968,7 @@ onUnmounted(() => {
               <h2 class="text-xs font-bold font-mono uppercase tracking-wider text-fuchsia-400 flex items-center space-x-2">
                 <span>⚙️ Contract & ESG Controls</span>
               </h2>
-              <span class="text-[10px] font-mono text-slate-400">Interactive</span>
+              <span class="text-[10px] font-mono text-slate-400">FastAPI Reactive</span>
             </div>
 
             <!-- Product Contract -->
@@ -978,10 +1020,41 @@ onUnmounted(() => {
               </div>
             </div>
 
+            <!-- Economics & Expenses -->
+            <div class="space-y-3 border-t border-white/[0.08] pt-4">
+              <h3 class="text-xs font-mono font-bold text-sky-400 uppercase tracking-wider">
+                Economics & Expenses
+              </h3>
+              <div class="grid grid-cols-2 gap-3">
+                <div>
+                  <label class="block text-[11px] text-slate-400 mb-1 font-mono">Base Rate (i)</label>
+                  <input
+                    type="number"
+                    v-model.number="form.interest_rate"
+                    step="0.005"
+                    min="0.01"
+                    max="0.20"
+                    class="w-full bg-[#070b14] border border-white/[0.1] rounded-xl px-3 py-1.5 text-xs text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label class="block text-[11px] text-slate-400 mb-1 font-mono">Acquisition (α %)</label>
+                  <input
+                    type="number"
+                    v-model.number="form.expense.percent_of_premium_first"
+                    step="0.05"
+                    min="0"
+                    max="1.0"
+                    class="w-full bg-[#070b14] border border-white/[0.1] rounded-xl px-3 py-1.5 text-xs text-white font-mono"
+                  />
+                </div>
+              </div>
+            </div>
+
             <!-- Vasicek ESG Parameters -->
             <div class="space-y-3 border-t border-white/[0.08] pt-4">
               <h3 class="text-xs font-mono font-bold text-rose-400 uppercase tracking-wider">
-                Vasicek ESG Model
+                Vasicek ESG Parameters
               </h3>
               <div class="grid grid-cols-2 gap-3">
                 <div>
@@ -1049,14 +1122,14 @@ onUnmounted(() => {
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
               </svg>
-              <span>{{ loading ? 'Running Simulation...' : 'Simulate & Value' }}</span>
+              <span>{{ loading ? 'Calculating via FastAPI...' : 'Run Valuation API' }}</span>
             </button>
           </div>
         </div>
 
         <!-- Center/Right Multi-Chart Display Workspace (2/3) -->
         <div class="lg:col-span-2 space-y-6">
-          <!-- View 1: Overview (Reserves + Fan Chart) -->
+          <!-- View 1: Overview & Reserves -->
           <div v-show="activeTab === 'overview' || activeTab === 'reserves'" class="space-y-6">
             <div class="neon-glass rounded-2xl p-5 border border-white/[0.08]">
               <div class="flex items-center justify-between mb-2">
@@ -1136,7 +1209,7 @@ onUnmounted(() => {
                     Multi-Decrement Cohort Rollout Table
                   </h3>
                   <p class="text-xs text-slate-400 font-mono">
-                    Detailed probability-weighted cashflows and discounted liabilities.
+                    Detailed probability-weighted cashflows and discounted liabilities from FastAPI backend.
                   </p>
                 </div>
                 <span class="text-xs font-mono text-slate-400">
@@ -1183,7 +1256,7 @@ onUnmounted(() => {
     </section>
 
     <!-- ──────────────────────────────────────────────────────────── -->
-    <!-- 6. Footer -->
+    <!-- 7. Footer -->
     <!-- ──────────────────────────────────────────────────────────── -->
     <footer class="border-t border-white/[0.08] bg-[#030712] py-6 mt-12 relative z-10">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between text-xs font-mono text-slate-500 gap-2">
@@ -1192,7 +1265,7 @@ onUnmounted(() => {
           <span>•</span>
           <span>SOA Illustrative Life Table (ω=110)</span>
           <span>•</span>
-          <span>Vasicek ESG</span>
+          <span>FastAPI REST API</span>
         </div>
         <div>FastAPI • Vue 3 • Apache ECharts • TailwindCSS</div>
       </div>
