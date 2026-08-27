@@ -99,3 +99,34 @@ class TestCurveAccessors:
         d = survival_age30.to_dict()
         assert set(d.keys()) == {"duration", "tpx", "tqx", "deferred_qx"}
         assert len(d["duration"]) == survival_age30.max_duration + 1
+
+
+class TestProjectionExceedingMortalityDataValidation:
+    """Verify that requesting projections exceeding available mortality table data raises explicit ValueError."""
+
+    def test_survival_curve_exceeding_max_duration_raises(self, soa_table: MortalityTable) -> None:
+        """Age 60 on table ending at 110 has only 50 years of data. Requesting 60 years raises ValueError."""
+        # 60 + 60 = 120 > 110 (omega)
+        with pytest.raises(ValueError, match="exceeds available mortality table data"):
+            SurvivalCurve(soa_table, entry_age=60, max_duration=60)
+
+    def test_tpx_vector_exceeding_max_duration_raises(self, soa_table: MortalityTable) -> None:
+        """tpx_vector with max_t exceeding omega raises ValueError."""
+        with pytest.raises(ValueError, match="exceeds available mortality table data"):
+            soa_table.tpx_vector(x=60, max_t=60)
+
+    def test_tqx_vector_exceeding_max_duration_raises(self, soa_table: MortalityTable) -> None:
+        """tqx_vector with max_t exceeding omega raises ValueError."""
+        with pytest.raises(ValueError, match="exceeds available mortality table data"):
+            soa_table.tqx_vector(x=60, max_t=60)
+
+    def test_get_tpx_exceeding_table_raises(self, soa_table: MortalityTable) -> None:
+        """get_tpx with t exceeding table limit raises ValueError."""
+        with pytest.raises(ValueError, match="exceeds available mortality table data"):
+            soa_table.get_tpx(x=60, t=60)
+
+    def test_get_deferred_qx_exceeding_table_raises(self, soa_table: MortalityTable) -> None:
+        """get_deferred_qx with u + t exceeding table limit raises ValueError."""
+        with pytest.raises(ValueError, match="exceeds available mortality table data"):
+            soa_table.get_deferred_qx(x=60, u=50, t=5)
+

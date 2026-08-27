@@ -73,8 +73,15 @@ class SurvivalCurve:
 
         if max_duration is None:
             max_duration = table.max_age - entry_age
-        else:
-            max_duration = min(max_duration, table.max_age - entry_age)
+        elif max_duration < 0:
+            raise ValueError(f"max_duration must be non-negative. Got {max_duration}.")
+        elif entry_age + max_duration > table.max_age:
+            raise ValueError(
+                f"Requested duration ({max_duration} years) from entry age {entry_age} "
+                f"(attained age {entry_age + max_duration}) exceeds available mortality table data. "
+                f"Maximum available duration is {table.max_age - entry_age} years "
+                f"(reaching limiting age {table.max_age} of {table.name})."
+            )
 
         self.max_duration = max_duration
 

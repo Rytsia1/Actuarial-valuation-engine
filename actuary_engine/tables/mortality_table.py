@@ -257,20 +257,21 @@ class MortalityTable:
             t-year survival probability.
 
         Raises:
-            ValueError: If age range is out of bounds.
+            ValueError: If age range is out of bounds or duration exceeds mortality table data.
         """
         if t < 0:
-            raise ValueError("t must be non-negative.")
+            raise ValueError(f"Duration t must be non-negative. Got {t}.")
         if t == 0:
             return 1.0
 
         x_idx = self._idx(x)
-        end_idx = x + t - self.min_age
-        if end_idx > self.num_ages:
+        if x + t > self.max_age + 1:
             raise ValueError(
-                f"Age x + t = {x + t} exceeds table limit {self.max_age + 1}."
+                f"Requested duration t={t} from age {x} (attained age {x + t}) "
+                f"exceeds available mortality table data. Limiting age is {self.max_age} ({self.name})."
             )
 
+        end_idx = x + t - self.min_age
         return float(self.lx[end_idx] / self.lx[x_idx])
 
     def get_tqx(self, x: int, t: int) -> float:
@@ -300,7 +301,19 @@ class MortalityTable:
 
         Returns:
             Deferred mortality probability.
+
+        Raises:
+            ValueError: If deferral window exceeds available mortality table data.
         """
+        if u < 0:
+            raise ValueError(f"u must be non-negative. Got {u}.")
+        if t <= 0:
+            raise ValueError(f"t must be positive. Got {t}.")
+        if x + u + t > self.max_age + 1:
+            raise ValueError(
+                f"Requested deferred window x + u + t = {x + u + t} "
+                f"exceeds available mortality table data ({self.max_age} in {self.name})."
+            )
         return self.get_tpx(x, u) * self.get_tqx(x + u, t)
 
     def tpx_vector(self, x: int, max_t: Optional[int] = None) -> np.ndarray:
@@ -312,14 +325,24 @@ class MortalityTable:
 
         Returns:
             Array of survival probabilities [₀pₓ, ₁pₓ, ..., ₘₐₓₜpₓ].
+
+        Raises:
+            ValueError: If x is out of range, max_t is negative, or x + max_t > max_age.
         """
         x_idx = self._idx(x)
         if max_t is None:
             max_t = self.max_age - x
-        end_idx = x_idx + max_t + 1
-        if end_idx > len(self.lx):
-            end_idx = len(self.lx)
+        elif max_t < 0:
+            raise ValueError(f"max_t must be non-negative. Got {max_t}.")
+        elif x + max_t > self.max_age:
+            raise ValueError(
+                f"Requested projection duration max_t ({max_t}) from age {x} "
+                f"(attained age {x + max_t}) exceeds available mortality table data. "
+                f"Maximum available duration is {self.max_age - x} years "
+                f"(reaching limiting age {self.max_age} of {self.name})."
+            )
 
+        end_idx = x_idx + max_t + 1
         lx_x = self.lx[x_idx]
         return self.lx[x_idx:end_idx] / lx_x
 
@@ -332,6 +355,9 @@ class MortalityTable:
 
         Returns:
             Array of mortality probabilities [₀qₓ, ₁qₓ, ..., ₘₐₓₜqₓ].
+
+        Raises:
+            ValueError: If projection duration exceeds mortality table bounds.
         """
         return 1.0 - self.tpx_vector(x, max_t)
 

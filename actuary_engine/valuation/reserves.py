@@ -99,7 +99,7 @@ class ReserveCalculator:
         Raises:
             ValueError: If t < 0 or t > n (for finite-term products).
         """
-        self._validate_duration(t, n)
+        self._validate_duration(t, n, x)
         comm = self.commutation
 
         if n is not None and t == n:
@@ -190,7 +190,7 @@ class ReserveCalculator:
         Returns:
             Retrospective net premium reserve at duration t.
         """
-        self._validate_duration(t, n)
+        self._validate_duration(t, n, x)
         comm = self.commutation
 
         if t == 0:
@@ -447,22 +447,27 @@ class ReserveCalculator:
     # Validation helpers
     # ────────────────────────────────────────────────────────────
 
-    @staticmethod
-    def _validate_duration(t: int, n: Optional[int]) -> None:
-        """Validate duration is within valid range.
+    def _validate_duration(self, t: int, n: Optional[int], x: Optional[int] = None) -> None:
+        """Validate duration is within valid range and table bounds.
 
         Args:
             t: Duration.
             n: Coverage term (None for whole life).
+            x: Optional issue age.
 
         Raises:
-            ValueError: If t is out of range.
+            ValueError: If t is out of range or exceeds mortality table bounds.
         """
         if t < 0:
             raise ValueError(f"Duration t must be non-negative. Got {t}.")
         if n is not None and t > n:
             raise ValueError(
                 f"Duration t = {t} exceeds coverage term n = {n}."
+            )
+        if x is not None and x + t > self.commutation._max_age:
+            raise ValueError(
+                f"Duration t = {t} from issue age {x} (attained age {x + t}) "
+                f"exceeds mortality table maximum age {self.commutation._max_age} ({self.commutation.table.name})."
             )
 
     def __repr__(self) -> str:

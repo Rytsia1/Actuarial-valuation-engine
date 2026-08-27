@@ -284,8 +284,17 @@ class LeeCarterModel:
         if issue_age < min_age or issue_age >= max_age:
             raise ValueError(f"issue_age {issue_age} outside fitted range [{min_age}, {max_age}].")
 
-        horizon = n_years if n_years is not None else (max_age - issue_age)
-        horizon = min(horizon, max_age - issue_age)
+        if n_years is not None:
+            if n_years <= 0:
+                raise ValueError(f"n_years must be positive. Got {n_years}.")
+            if issue_age + n_years > max_age:
+                raise ValueError(
+                    f"Requested projection horizon {issue_age} + {n_years} = {issue_age + n_years} "
+                    f"exceeds fitted model maximum age {max_age}."
+                )
+            horizon = n_years
+        else:
+            horizon = max_age - issue_age
 
         # Forecast required future years
         q_future = self.forecast_expected(n_ahead=horizon)  # (N, horizon)
