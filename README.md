@@ -1,233 +1,125 @@
-# Actuarial Valuation & Risk Engine
+# Actura | Actuarial Valuation & Risk Platform
 
-A modular, production-ready Python engine for life insurance liability modeling, prospective & retrospective reserves, and stochastic risk simulation.
+![Python](https://img.shields.io/badge/Python-3.10+-blue.svg?logo=python&logoColor=white)
+![Vue.js](https://img.shields.io/badge/Vue.js-3.x-4FC08D.svg?logo=vuedotjs&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688.svg?logo=fastapi&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Ready-2496ED.svg?logo=docker&logoColor=white)
 
-## Features
+**Actura** is an enterprise-grade actuarial platform that bridges the gap between complex risk mathematics and modern UI/UX. It provides actuaries and risk engineers with a powerful Python-based valuation engine (handling everything from Monte Carlo simulations to IFRS 17 trajectories) paired with a sleek, neo-skeuomorphic Vue 3 dashboard.
 
-- **Life Table Parsing** — Load SOA Illustrative Life Table or custom CSV mortality tables (`qx`, `lx`, `dx`, `tpx`, `tqx`)
-- **Commutation Functions** — Fully vectorized `Dx`, `Nx`, `Cx`, `Mx` computation via NumPy reverse cumsum
-- **Insurance Pricing** — Net Single Premiums for term, whole life, endowment, and pure endowment
-- **Annuity Pricing** — Whole-life and temporary annuities, due and immediate variants
-- **Level Premiums** — Annual net premiums via the equivalence principle, with limited-pay support
-- **Survival Curves** — Vectorized `tpx`/`tqx` arrays, curtate and complete life expectancy
-- **Cash Flow Projections** — Deterministic expected cash flows with equivalence validation
-- **Policy Reserves (_t V)** — Prospective and retrospective net premium reserves with automated `_t V_pro ≡ _t V_retro` validation and Fackler recurrence
-- **Gross Premium Valuation (GPV / BEL)** — Multi-decrement cash flows with acquisition/maintenance expenses (α, β, γ) and UDD-based lapse/surrender behavior
-- **Economic Scenario Generator (ESG)** — Vectorized Vasicek short-rate simulation with Euler-Maruyama and exact Gaussian discretization
-- **Dynamic Policyholder Behavior** — S-curve interest rate sensitive lapse modeling (disintermediation risk)
-- **Monte Carlo Valuation & Tail Risk** — Path-dependent liability projections, Value at Risk ($\text{VaR}_{95}, \text{VaR}_{99}$), and Conditional Value at Risk ($\text{CVaR}_{95}, \text{CVaR}_{99}$)
+## 📸 Platform Previews
 
-## Architecture
+### Valuation Dashboard
+![Actura Dashboard](image_f3c497.png)
+*Real-time stochastic projection, tail risk (CVaR) analysis, and comprehensive reserve profiles.*
 
-```
-actuary_engine/
-├── models/              # Pydantic v2 data models
-│   ├── assumptions.py   # Interest, mortality, expense, lapse assumptions
-│   └── contracts.py     # PolicyContract, ProductType enum
-├── tables/              # Life table & commutation
-│   ├── mortality_table.py
-│   └── commutation.py
-├── pricing/             # Insurance & annuity pricing
-│   ├── insurance.py     # InsurancePricer (NSPs)
-│   ├── annuity.py       # AnnuityPricer (APVs)
-│   └── premium.py       # LevelPremiumCalculator
-├── valuation/           # Policy reserves & liability engines
-│   ├── reserves.py      # ReserveCalculator (prospective, retrospective, recurrence)
-│   └── gpv.py           # GrossPremiumValuation (BEL, expenses, multi-decrement)
-├── stochastic/          # Level 4: Stochastic simulation & risk engine
-│   ├── esg.py           # VasicekESG (Euler-Maruyama & exact paths, discount factors)
-│   ├── dynamic_lapse.py # DynamicLapseModel (S-curve policyholder behavior)
-│   └── monte_carlo.py   # StochasticValuationEngine (Monte Carlo, VaR, CVaR)
-├── curves/              # Survival & discount curves
-│   └── survival.py      # SurvivalCurve
-├── projections/         # Cash flow engines
-│   └── cash_flow.py     # CashFlowProjector
-└── data/                # Bundled reference data
-    └── soa_ilt.csv      # SOA Illustrative Life Table
-```
-
-## Quick Start
-
-### Installation & Environment Setup
-
-```bash
-# Clone the repository
-git clone https://github.com/your-repo/actuarial-valuation-engine.git
-cd actuarial-valuation-engine
-
-# Create virtual environment and install
-python -m venv .venv
-```
-
-Activate the virtual environment in your terminal:
-
-**Windows PowerShell:**
-```powershell
-.\.venv\Scripts\Activate.ps1
-```
-*(If PowerShell restricts script execution, run: `Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass`)*
-
-**Windows Command Prompt:**
-```cmd
-.venv\Scripts\activate.bat
-```
-
-**macOS / Linux:**
-```bash
-source .venv/bin/activate
-```
-
-Then install the package with development dependencies:
-```bash
-pip install -e ".[dev]"
-```
+### Contract Logic Blueprint Builder
+![Logic Builder](image_f3c49f.jpg)
+*A visual, node-based DAG (Directed Acyclic Graph) editor for designing insurance cash flow blueprints without writing code.*
 
 ---
 
-### Run the Demo
+## ✨ Key Features
 
-Once `.venv` is activated:
+- 🧩 **Visual Logic Builder:** Drag-and-drop DAG editor to map out premiums, benefits, and decrement models seamlessly.
+- 📈 **Stochastic Engine:** Integrated Economic Scenario Generators (ESG) and advanced Monte Carlo simulations.
+- 📊 **Risk Analytics:** Built-in calculation for BEL, VaR 95%, CVaR / CTE 95, and quantile fan-charts.
+- ⚡ **High-Performance Backend:** Powered by FastAPI for rapid deterministic and stochastic valuations.
+- 🐳 **Docker-Ready:** Fully containerized architecture with Nginx reverse proxy for immediate, production-like deployment.
+
+## 🛠️ Tech Stack
+
+**Backend (Actuarial Engine)**
+- Python 3.10+
+- FastAPI & Uvicorn
+- NumPy, Pandas, SciPy (for quantitative modeling)
+
+**Frontend (Dashboard & Blueprint)**
+- Vue 3 (Composition API)
+- Vite
+- Tailwind CSS
+- Vue Flow (for the node-based logic builder)
+- Apache ECharts (for charting and distributions)
+
+**Infrastructure**
+- Docker & Docker Compose
+- Nginx (Reverse Proxy & Static File Serving)
+
+---
+
+## 🚀 Quick Start (Docker)
+
+The easiest way to get Actura up and running is via Docker. The provided configuration automatically builds the frontend, sets up the Python API, and configures Nginx routing.
+
+### Prerequisites
+- Docker and Docker Compose installed on your machine.
+
+### Installation Steps
+
+1. **Clone the repository**
+   ```bash
+   git clone https://github.com/rytsia1/actuarial-valuation-engine.git
+   cd actuarial-valuation-engine
+   ```
+
+2. **Build and spin up the containers**
+   ```bash
+   docker-compose up --build -d
+   ```
+
+3. **Access the Platform**
+   - 🖥️ **UI Dashboard:** Open `http://localhost:3000` in your browser.
+   - ⚙️ **API Documentation:** Interactive Swagger UI is available at `http://localhost:8000/docs`.
+
+*(Note: API requests from the frontend are automatically routed through Nginx via `/api/` to avoid CORS issues).*
+
+---
+
+## 📂 Project Structure
+
+```text
+actuarial-valuation-engine/
+├── actuary_engine/        # Python Backend / Valuation Engine
+│   ├── api/               # FastAPI routes and schemas
+│   ├── models/            # Core actuarial math models
+│   ├── pricing/           # Premium and annuity calculators
+│   ├── projections/       # Cash flow projection logic
+│   ├── stochastic/        # Monte Carlo & ESG kernels
+│   ├── tables/            # Mortality and decrement tables (e.g., SOA ILT)
+│   └── valuation/         # IFRS 17, Reserves, and Sensitivities
+├── frontend/              # Vue 3 Frontend
+│   ├── src/               # UI components, Vue Flow, ECharts
+│   ├── nginx.conf         # Nginx reverse proxy configuration
+│   └── Dockerfile         # Multi-stage frontend build
+├── Dockerfile             # Backend Dockerfile
+└── docker-compose.yml     # Container orchestration
+```
+
+## 🧑‍💻 Manual Development Setup
+
+If you prefer to run the project locally without Docker for development purposes:
+
+**1. Run Backend**
+
 ```bash
-python examples/quickstart.py
+# Create virtual environment and install dependencies
+cd actuary_engine
+pip install -r requirements.txt
+
+# Start FastAPI server
+uvicorn api.main:app --reload --port 8000
 ```
 
-Or run directly with the virtual environment binary without activating:
-```powershell
-.\.venv\Scripts\python.exe examples/quickstart.py
-```
+**2. Run Frontend**
 
----
-
-### Run Tests
-
-Once `.venv` is activated:
-```bash
-pytest tests/ -v --cov=actuary_engine
-```
-
-Or run directly with the virtual environment pytest:
-```powershell
-.\.venv\Scripts\pytest.exe tests/ -v --cov=actuary_engine
-```
-
----
-
-### Python API Usage
-
-```python
-from actuary_engine import (
-    MortalityTable,
-    CommutationFunctions,
-    LevelPremiumCalculator,
-    ReserveCalculator,
-    VasicekParams,
-    VasicekESG,
-    DynamicLapseParams,
-    DynamicLapseModel,
-    StochasticValuationEngine,
-    InterestAssumption,
-    PolicyContract,
-    ProductType,
-)
-
-# 1. Load mortality table & build commutation at 5% interest
-table = MortalityTable.from_soa_ilt()
-interest = InterestAssumption(annual_rate=0.05)
-comm = CommutationFunctions(table, interest)
-
-# 2. Price a 20-year endowment for age 30
-calc = LevelPremiumCalculator(comm)
-result = calc.annual_premium_endowment(x=30, n=20, face=1_000_000)
-
-print(f"Annual Premium: ${result.annual_premium:,.2f}")
-print(f"NSP:            ${result.nsp:,.2f}")
-print(f"Annuity Factor:  {result.annuity_factor:.4f}")
-
-# 3. Compute policy reserve trajectory (_t V)
-contract = PolicyContract(
-    product_type=ProductType.ENDOWMENT,
-    issue_age=30,
-    term=20,
-    sum_assured=1_000_000,
-)
-res_calc = ReserveCalculator(comm)
-res_df = res_calc.reserve_profile(contract, result.annual_premium, method="both")
-
-# 4. Stochastic Monte Carlo Valuation & Tail Risk (Level 4)
-esg = VasicekESG(VasicekParams(r0=0.05, kappa=0.20, theta=0.05, sigma=0.015))
-dyn_lapse = DynamicLapseModel(DynamicLapseParams(credited_rate=0.04, sensitivity=25.0))
-stoch_engine = StochasticValuationEngine(table=table, esg=esg, dynamic_lapse=dyn_lapse)
-
-stoch_res = stoch_engine.run_simulation(contract, gross_premium=35_000.0, n_scenarios=2000)
-print(stoch_res.summary())
-```
-
-## Mathematical Foundation
-
-### Commutation Functions
-
-| Symbol | Formula | Description |
-|--------|---------|-------------|
-| $D_x$ | $v^x \cdot l_x$ | Discounted survivors |
-| $C_x$ | $v^{x+1} \cdot d_x$ | Discounted deaths |
-| $N_x$ | $\sum_{k \ge x} D_k$ | Cumulative $D_x$ |
-| $M_x$ | $\sum_{k \ge x} C_k$ | Cumulative $C_x$ |
-
-### Annual Level Premium (Equivalence Principle)
-
-$$P = \frac{\text{NSP}}{\ddot{a}_{x:\overline{n}|}}$$
-
-### Policy Reserves (_t V)
-
-- **Prospective:** ${}_t V = \text{APV}(\text{Future Benefits}) - \text{APV}(\text{Future Premiums})$
-- **Retrospective:** ${}_t V = [\text{APV}(\text{Past Premiums}) - \text{Past Claims}] \times \frac{D_x}{D_{x+t}}$
-- **Invariants:** ${}_0 V = 0$, ${}_n V = 0$ (Term), ${}_n V = S$ (Endowment), ${}_t V_{\text{pro}} \equiv {}_t V_{\text{retro}}$
-
-### Economic Scenario Generator (Vasicek Short-Rate Model)
-
-$$dr_t = \kappa(\theta - r_t)dt + \sigma dW_t$$
-
-- **Euler-Maruyama:** $r_{t+1} = r_t + \kappa(\theta - r_t)\Delta t + \sigma \sqrt{\Delta t} Z_t$
-- **Stochastic Discount Factor:** $D(t) = \exp\left(-\sum_{k=0}^{t-1} r_k \Delta t\right)$
-
-### Dynamic Policyholder Lapse (S-Curve)
-
-$$w(r_t) = w_{\min} + \frac{w_{\max} - w_{\min}}{1 + \exp\left(-\gamma \cdot (r_t - r_{\text{cred}} - x_0)\right)}$$
-
-### Quantitative Tail Risk Measures
-
-- **Value at Risk (VaR):** $\text{VaR}_\alpha = \inf \{ x \in \mathbb{R} : P(\text{BEL} \le x) \ge \alpha \}$
-- **Conditional Value at Risk (CVaR / Expected Shortfall):** $\text{CVaR}_\alpha = \mathbb{E}[\text{BEL} \mid \text{BEL} \ge \text{VaR}_\alpha]$
-
----
-
-### Launching the Web Application (FastAPI + Vue 3)
-
-#### 1. Start the FastAPI Backend Server
-```powershell
-.\.venv\Scripts\uvicorn.exe actuary_engine.api.main:app --reload --port 8000
-```
-API Documentation will be live at `http://127.0.0.1:8000/docs`.
-
-#### 2. Start the Vue 3 Frontend Dev Server
-In a separate terminal:
 ```bash
 cd frontend
 npm install
+
+# Start Vite dev server
 npm run dev
 ```
-Open your browser at `http://localhost:5173` to access the interactive Actuarial Valuation Dashboard.
 
 ---
 
-## Roadmap
-
-- [x] **Level 1–2:** Life tables, commutation functions, pricing, annual level premiums
-- [x] **Level 3:** Prospective/retrospective reserves, Fackler recurrence, GPV/BEL, expense loading, lapse modeling
-- [x] **Level 4:** ESG (Vasicek), dynamic lapse S-curve, Monte Carlo valuation, tail risk (VaR/CVaR)
-- [x] **API Layer:** FastAPI endpoints (`/api/v1/valuation/deterministic` & `/api/v1/valuation/stochastic`)
-- [x] **Frontend:** Vue 3 + TailwindCSS + Apache ECharts dashboard (interactive reserve profiles, Vasicek fan chart, tail loss histogram, cohort rollouts)
-
-## License
-
-MIT
+*Built with precision for modern risk engineers.*
