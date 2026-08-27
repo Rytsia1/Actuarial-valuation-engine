@@ -598,14 +598,12 @@ onUnmounted(() => {
     <aside :class="['sidebar', sidebarOpen ? 'open' : '']">
       <!-- Brand -->
       <div class="px-5 py-5 flex items-center space-x-3 border-b border-white/[0.06]">
-        <div class="h-8 w-8 rounded-lg bg-sky-600 flex items-center justify-center flex-shrink-0">
-          <svg class="h-4 w-4 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-          </svg>
+        <div class="h-12 w-12 rounded-xl flex-shrink-0 shadow-md border border-white/[0.05] relative overflow-hidden bg-[#070b14]">
+          <img src="/logo.jpg" alt="Actura Mascot" class="absolute w-[220%] h-[220%] max-w-none -bottom-[15%] -right-[20%]" />
         </div>
         <div>
-          <div class="text-sm font-semibold text-white tracking-tight">ValuaEngine</div>
-          <div class="text-[10px] text-slate-500 font-medium">Actuarial Platform</div>
+          <div class="text-sm font-semibold text-white tracking-tight">Actura</div>
+          <div class="text-[10px] text-slate-500 font-medium">Actuarial Valuation & Risk Platform</div>
         </div>
       </div>
 
@@ -978,7 +976,7 @@ onUnmounted(() => {
       <footer class="border-t border-white/[0.06] py-5 mt-8">
         <div class="px-6 flex flex-col sm:flex-row items-center justify-between text-[11px] text-slate-600 gap-2">
           <div class="flex items-center space-x-1.5">
-            <span class="text-slate-400 font-medium">ValuaEngine</span>
+            <span class="text-slate-400 font-medium">Actura</span>
             <span>·</span><span>IFRS 17</span><span>·</span><span>Monte Carlo ESG</span><span>·</span><span>Batch Portfolio</span>
           </div>
           <div>FastAPI · Vue 3 · ECharts · TailwindCSS</div>
