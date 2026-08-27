@@ -59,7 +59,7 @@ class DeterministicValuationRequest(BaseModel):
     term: Optional[int] = Field(default=20, gt=0, description="Coverage term in years.")
     sum_assured: float = Field(default=1_000_000.0, gt=0.0, description="Sum assured / Face amount.")
     premium_paying_term: Optional[int] = Field(default=None, gt=0, description="Premium paying term.")
-    interest_rate: float = Field(default=0.05, gt=0.0, le=0.50, description="Annual effective interest rate.")
+    interest_rate: float = Field(default=0.05, ge=0.0, le=0.50, description="Annual effective interest rate.")
     gross_premium: Optional[float] = Field(
         default=None, gt=0.0, description="Gross premium. If None, calculated with 20% loading."
     )
@@ -268,7 +268,7 @@ class IFRS17ValuationRequest(BaseModel):
     term: Optional[int] = Field(default=20, ge=1, description="Policy coverage term in years.")
     sum_assured: float = Field(default=500000.0, gt=0.0, description="Sum assured / Face amount.")
     premium_paying_term: Optional[int] = Field(default=None, ge=1, description="Premium payment duration.")
-    interest_rate: float = Field(default=0.05, gt=0.0, le=0.50, description="Locked-in valuation discount rate.")
+    interest_rate: float = Field(default=0.05, ge=0.0, le=0.50, description="Locked-in valuation discount rate.")
     gross_premium: Optional[float] = Field(default=None, gt=0.0, description="Annual gross premium (auto-calculated if omitted).")
     table_id: str = Field(default="soa_ilt", description="Mortality table identifier.")
     ra_ratio: float = Field(default=0.06, ge=0.0, le=0.50, description="Risk Adjustment loading factor.")
@@ -353,7 +353,7 @@ class SensitivityRequest(BaseModel):
     term: Optional[int] = Field(default=20, ge=1, description="Policy coverage term in years.")
     sum_assured: float = Field(default=500000.0, gt=0.0, description="Sum assured / Face amount.")
     premium_paying_term: Optional[int] = Field(default=None, ge=1, description="Premium payment duration.")
-    interest_rate: float = Field(default=0.05, gt=0.0, le=0.50, description="Baseline valuation discount rate.")
+    interest_rate: float = Field(default=0.05, ge=0.0, le=0.50, description="Baseline valuation discount rate.")
     gross_premium: Optional[float] = Field(default=None, gt=0.0, description="Annual gross premium (auto-calculated if omitted).")
     table_id: str = Field(default="soa_ilt", description="Mortality table identifier.")
     expense: Optional[ExpenseAssumption] = Field(default=None, description="Acquisition and maintenance expense loadings.")

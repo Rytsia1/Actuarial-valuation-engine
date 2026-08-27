@@ -350,3 +350,31 @@ class TestGPVEndowment:
         df_with_lapse = gpv_with_lapse.project(contract, 30_000.0)
         assert df_with_lapse["maturity_benefit"].iloc[-1] < \
                df_no_lapse["maturity_benefit"].iloc[-1]
+
+
+class TestLapseAssumptionValidation:
+    """Test validation constraints on LapseAssumption and duration_rates."""
+
+    def test_negative_duration_rate_raises(self) -> None:
+        """duration_rates containing negative rates like -0.5 must be rejected."""
+        with pytest.raises(Exception, match="must be a valid probability in range"):
+            LapseAssumption(duration_rates=[-0.5, 0.05])
+
+    def test_duration_rate_exceeding_one_raises(self) -> None:
+        """duration_rates containing rates > 1.0 like 2.0 must be rejected."""
+        with pytest.raises(Exception, match="must be a valid probability in range"):
+            LapseAssumption(duration_rates=[0.10, 2.0])
+
+    def test_nan_duration_rate_raises(self) -> None:
+        """duration_rates containing NaN or Inf must be rejected."""
+        with pytest.raises(Exception, match="must be a finite number"):
+            LapseAssumption(duration_rates=[0.10, float("nan")])
+
+    def test_valid_boundary_duration_rates(self) -> None:
+        """duration_rates with valid probabilities (including 0.0 and 1.0) are accepted."""
+        lapse = LapseAssumption(duration_rates=[0.0, 0.05, 0.10, 1.0], flat_annual_rate=0.02)
+        assert lapse.duration_rates == [0.0, 0.05, 0.10, 1.0]
+        assert lapse.get_rate(1) == 0.0
+        assert lapse.get_rate(4) == 1.0
+        assert lapse.get_rate(5) == 0.02
+

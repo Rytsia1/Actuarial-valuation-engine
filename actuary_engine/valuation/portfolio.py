@@ -198,6 +198,16 @@ class PortfolioValuationEngine:
                 f"(omega) of {max_age} ({table_name})."
             )
 
+        # Validate premium paying term does not exceed table.max_age
+        exceed_prem_term_mask = (issue_age_arr + prem_term_arr) > max_age
+        if exceed_prem_term_mask.any():
+            bad_row = df[exceed_prem_term_mask].iloc[0]
+            raise ValueError(
+                f"Policy '{bad_row['policy_id']}': issue_age ({bad_row['issue_age']}) + premium_paying_term ({bad_row['premium_paying_term']}) = "
+                f"{bad_row['issue_age'] + bad_row['premium_paying_term']} exceeds mortality table maximum age "
+                f"(omega) of {max_age} ({table_name})."
+            )
+
         return df
 
     def evaluate_portfolio(self, df: pd.DataFrame) -> tuple[pd.DataFrame, PortfolioSummary]:

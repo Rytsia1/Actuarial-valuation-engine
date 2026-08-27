@@ -55,7 +55,7 @@ from actuary_engine.api.schemas import (
 )
 from actuary_engine.curves.yield_curve import MarketYieldCurve
 from actuary_engine.models.assumptions import ExpenseAssumption, InterestAssumption, LapseAssumption
-from actuary_engine.models.contracts import PolicyContract
+from actuary_engine.models.contracts import PolicyContract, ProductType
 from actuary_engine.pricing.premium import LevelPremiumCalculator
 from actuary_engine.stochastic.dynamic_lapse import DynamicLapseModel
 from actuary_engine.stochastic.esg import VasicekESG, VasicekParams
@@ -236,10 +236,11 @@ def evaluate_deterministic(request: DeterministicValuationRequest) -> Determinis
         raise HTTPException(status_code=404, detail=str(e)) from e
 
     try:
+        eff_term = None if request.product_type == ProductType.WHOLE_LIFE else request.term
         contract = PolicyContract(
             product_type=request.product_type,
             issue_age=request.issue_age,
-            term=request.term,
+            term=eff_term,
             sum_assured=request.sum_assured,
             premium_paying_term=request.premium_paying_term,
         )

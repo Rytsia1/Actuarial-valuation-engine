@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel, Field, computed_field, model_validator
+from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 
 
 class InterestAssumption(BaseModel):
@@ -27,9 +27,9 @@ class InterestAssumption(BaseModel):
 
     annual_rate: float = Field(
         ...,
-        gt=0.0,
+        ge=0.0,
         lt=1.0,
-        description="Annual effective interest rate, e.g. 0.05 for 5%.",
+        description="Annual effective interest rate, e.g. 0.05 for 5% (0.0 allowed).",
     )
 
     @computed_field  # type: ignore[prop-decorator]
@@ -138,6 +138,25 @@ class LapseAssumption(BaseModel):
         default=None,
         description="Duration-specific lapse rates [year1, year2, ...].",
     )
+
+    @field_validator("duration_rates", mode="after")
+    @classmethod
+    def validate_duration_rates(cls, v: Optional[list[float]]) -> Optional[list[float]]:
+        """Validate that all duration-specific lapse rates are valid probabilities in [0.0, 1.0]."""
+        if v is None:
+            return None
+        import math
+
+        for idx, rate in enumerate(v):
+            if rate is None or math.isnan(rate) or math.isinf(rate):
+                raise ValueError(
+                    f"duration_rates[{idx}] must be a finite number, got {rate}."
+                )
+            if not (0.0 <= rate <= 1.0):
+                raise ValueError(
+                    f"duration_rates[{idx}] ({rate}) must be a valid probability in range [0.0, 1.0]."
+                )
+        return v
 
     def get_rate(self, duration: int) -> float:
         """Get lapse rate for a specific policy duration (1-indexed).

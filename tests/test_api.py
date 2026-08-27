@@ -85,3 +85,37 @@ def test_stochastic_valuation_endpoint(client: TestClient) -> None:
     assert data["var_95"] <= data["var_99"]
     assert len(data["fan_chart_rates"]) == 16  # 0..15 years
     assert len(data["liability_histogram"]) > 0
+
+
+def test_deterministic_valuation_zero_interest_rate(client: TestClient) -> None:
+    """Deterministic endpoint accepts interest_rate=0.0 (v=1.0) and computes valid results."""
+    payload = {
+        "product_type": "whole_life",
+        "issue_age": 30,
+        "sum_assured": 100_000,
+        "interest_rate": 0.0,
+    }
+    response = client.post("/api/v1/valuation/deterministic", json=payload)
+    assert response.status_code == 200
+    data = response.json()
+    assert data["product_type"] == "whole_life"
+    assert data["nsp"] == 100_000.0  # Whole life NSP at 0% interest is sum_assured * 1.0
+    assert data["annual_net_premium"] > 0
+
+
+def test_deterministic_valuation_invalid_duration_rates_rejected(client: TestClient) -> None:
+    """Deterministic endpoint rejects duration_rates outside [0, 1] with 422 Unprocessable Entity."""
+    payload = {
+        "product_type": "endowment",
+        "issue_age": 30,
+        "term": 10,
+        "sum_assured": 100_000,
+        "lapse": {
+            "duration_rates": [-0.5, 2.0],
+            "flat_annual_rate": 0.03,
+        },
+    }
+    response = client.post("/api/v1/valuation/deterministic", json=payload)
+    assert response.status_code == 422
+
+

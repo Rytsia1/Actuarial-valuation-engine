@@ -340,3 +340,38 @@ class TestAPIEndpointsRejectTableViolations:
         res = client.post("/api/v1/valuation/portfolio", json=payload)
         assert res.status_code == 400
         assert "BAD-1" in res.json()["detail"]
+
+    def test_whole_life_limited_pay_boundary_exceeded_raises(self, soa_table: MortalityTable) -> None:
+        """Issue age 100 with premium_paying_term=40 on table ending at 110 (10 years available) must be rejected."""
+        contract = PolicyContract(
+            product_type=ProductType.WHOLE_LIFE,
+            issue_age=100,
+            premium_paying_term=40,
+            sum_assured=100_000,
+        )
+        with pytest.raises(ValueError, match="Premium paying term \\(40\\) exceeds maximum allowable duration \\(10\\)"):
+            contract.validate_against_table(soa_table)
+
+        # Commutation / Pricing level
+        comm = CommutationFunctions(soa_table, InterestAssumption(annual_rate=0.05))
+        calc = LevelPremiumCalculator(comm)
+        with pytest.raises(ValueError, match="Age x \\+ n = 140 exceeds table maximum 110"):
+            calc.annual_premium_whole_life(x=100, face=100_000, premium_term=40)
+
+    def test_whole_life_limited_pay_boundary_exact_passes(self, soa_table: MortalityTable) -> None:
+        """Issue age 100 with premium_paying_term=10 reaches exact limiting age 110 and calculates valid premium."""
+        contract = PolicyContract(
+            product_type=ProductType.WHOLE_LIFE,
+            issue_age=100,
+            premium_paying_term=10,
+            sum_assured=100_000,
+        )
+        contract.validate_against_table(soa_table)
+
+        comm = CommutationFunctions(soa_table, InterestAssumption(annual_rate=0.05))
+        calc = LevelPremiumCalculator(comm)
+        res = calc.annual_premium_whole_life(x=100, face=100_000, premium_term=10)
+        assert res.annual_premium > 0
+        assert res.premium_paying_term == 10
+        assert res.term is None
+

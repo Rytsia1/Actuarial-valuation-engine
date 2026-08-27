@@ -162,3 +162,43 @@ class TestAnnuityPresentValues:
         adx = commutation_5pct.whole_life_annuity_due(x)
         d = commutation_5pct.interest.effective_discount_rate
         assert ax == pytest.approx(1.0 - d * adx, rel=1e-10)
+
+
+class TestZeroInterestRate:
+    """Test 0% interest rate behavior (v=1, i=0)."""
+
+    def test_zero_interest_assumption_properties(self) -> None:
+        """InterestAssumption with i=0% has v=1, delta=0, d=0."""
+        interest = InterestAssumption(annual_rate=0.0)
+        assert interest.annual_rate == 0.0
+        assert interest.discount_factor == 1.0
+        assert interest.force_of_interest == 0.0
+        assert interest.effective_discount_rate == 0.0
+
+    def test_negative_interest_rate_raises(self) -> None:
+        """Negative interest rate is rejected by Pydantic validation."""
+        with pytest.raises(Exception):
+            InterestAssumption(annual_rate=-0.01)
+
+    def test_commutation_at_zero_interest(self, soa_table: MortalityTable) -> None:
+        """At 0% interest: Dx = lx, Cx = dx, Mx = lx, and Ax = 1.0."""
+        interest_0 = InterestAssumption(annual_rate=0.0)
+        comm_0 = CommutationFunctions(soa_table, interest_0)
+
+        for x in [0, 30, 65, 100]:
+            # Dx = lx
+            assert comm_0.get_Dx(x) == pytest.approx(soa_table.get_lx(x), rel=1e-10)
+            # Cx = dx
+            assert comm_0.get_Cx(x) == pytest.approx(soa_table.get_dx(x), rel=1e-10)
+            # Mx = sum_{k=x}^omega dx = lx
+            assert comm_0.get_Mx(x) == pytest.approx(soa_table.get_lx(x), rel=1e-10)
+            # Whole life Ax = Mx / Dx = lx / lx = 1.0
+            assert comm_0.whole_life_insurance(x) == pytest.approx(1.0, rel=1e-10)
+
+        # Relation Ax = 1 - d * äx holds trivially (1 = 1 - 0 * äx = 1)
+        for x in [20, 50]:
+            ax = comm_0.whole_life_insurance(x)
+            assert ax == pytest.approx(1.0, rel=1e-10)
+            adx = comm_0.whole_life_annuity_due(x)
+            assert ax == pytest.approx(1.0 - comm_0.interest.effective_discount_rate * adx, rel=1e-10)
+
