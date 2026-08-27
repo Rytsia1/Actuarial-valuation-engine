@@ -1,5 +1,5 @@
 <script setup>
-import { ref, shallowRef, reactive, watch, onMounted, onUnmounted, nextTick, markRaw } from 'vue'
+import { ref, shallowRef, reactive, computed, watch, onMounted, onUnmounted, nextTick, markRaw } from 'vue'
 import * as echarts from 'echarts'
 import {
   Scale,

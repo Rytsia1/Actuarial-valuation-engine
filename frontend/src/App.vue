@@ -1,5 +1,5 @@
 <script setup>
-import { ref, shallowRef, reactive, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, shallowRef, reactive, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import {
   checkHealth,
   fetchTables,
