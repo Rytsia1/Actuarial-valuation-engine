@@ -1,11 +1,9 @@
 <script setup>
-import { ref, shallowRef, reactive, onMounted, onUnmounted, nextTick, markRaw } from 'vue'
-import * as echarts from 'echarts'
+import { ref, shallowRef, reactive, onMounted, onUnmounted, nextTick } from 'vue'
 import {
   checkHealth,
   fetchTables,
   uploadMortalityTable,
-  deleteMortalityTable,
   runDeterministicValuation,
   runIFRS17Valuation,
   runSensitivityAnalysis,
@@ -17,7 +15,16 @@ import {
   ActuaryApiError,
 } from './services/actuaryApi'
 import { connectSimulationSocket } from './services/simulationSocket'
-import StressTestDashboard from './components/StressTestDashboard.vue'
+
+// Decomposed Modular Dashboard Components
+import ValuationForm from './components/ValuationForm.vue'
+import OverviewDashboard from './components/OverviewDashboard.vue'
+import ReserveDashboard from './components/ReserveDashboard.vue'
+import StochasticDashboard from './components/StochasticDashboard.vue'
+import IFRS17Dashboard from './components/IFRS17Dashboard.vue'
+import SensitivityDashboard from './components/SensitivityDashboard.vue'
+import PortfolioDashboard from './components/PortfolioDashboard.vue'
+import CashFlowTable from './components/CashFlowTable.vue'
 import ContractBuilderView from './views/ContractBuilderView.vue'
 
 // ────────────────────────────────────────────────────────────
@@ -40,6 +47,7 @@ const uploadTableName = ref('')
 const uploadTableDesc = ref('')
 const uploadTableFile = ref(null)
 const isTableDragging = ref(false)
+const tableFileInput = ref(null)
 
 // Simulation Progress Tracking
 const isSimulating = ref(false)
@@ -54,15 +62,13 @@ const portfolioLoading = ref(false)
 const portfolioError = ref(null)
 const portfolioData = shallowRef(null)
 const portfolioInterestRate = ref(0.05)
-const isDragging = ref(false)
 
 // IFRS 17 State
 const ifrs17Data = shallowRef(null)
-const ifrs17Loading = ref(false)
 
 // Sensitivity & Stress State
 const sensitivityData = shallowRef(null)
-const sensitivityLoading = ref(false)
+const sensitivityDashboardRef = ref(null)
 
 // Form Parameters with standard actuarial defaults
 const form = reactive({
@@ -108,33 +114,6 @@ const form = reactive({
 const deterministicData = shallowRef(null)
 const stochasticData = shallowRef(null)
 
-// Chart DOM refs & instances
-const heroChartRef = ref(null)
-const reserveChartRef = ref(null)
-const fanChartRef = ref(null)
-const cashFlowChartRef = ref(null)
-const distChartRef = ref(null)
-const portfolioCfChartRef = ref(null)
-const portfolioProdChartRef = ref(null)
-const portfolioAgeChartRef = ref(null)
-const ifrs17LrcChartRef = ref(null)
-const ifrs17PnlChartRef = ref(null)
-const tornadoChartRef = ref(null)
-const stressTestDashboardRef = ref(null)
-
-let heroChart = null
-let reserveChart = null
-let fanChart = null
-let cashFlowChart = null
-let distChart = null
-let portfolioCfChart = null
-let portfolioProdChart = null
-let portfolioAgeChart = null
-let ifrs17LrcChart = null
-let ifrs17PnlChart = null
-let tornadoChart = null
-let resizeObserver = null
-
 // Navigation definition
 const navItems = [
   { id: 'overview', label: 'Overview', icon: 'chart' },
@@ -148,10 +127,6 @@ const navItems = [
   { id: 'portfolio', label: 'Portfolio Batch', icon: 'portfolio' },
 ]
 
-// ────────────────────────────────────────────────────────────
-// Formatting Helpers
-// ────────────────────────────────────────────────────────────
-
 function formatCurrency(val) {
   if (val === undefined || val === null || isNaN(val)) return '—'
   return new Intl.NumberFormat('en-US', {
@@ -161,64 +136,14 @@ function formatCurrency(val) {
   }).format(val)
 }
 
-function formatNumber(val, decimals = 2) {
-  if (val === undefined || val === null || isNaN(val)) return '—'
-  return Number(val).toLocaleString('en-US', {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals,
-  })
-}
-
-function formatPercent(val, decimals = 1) {
-  if (val === undefined || val === null || isNaN(val)) return '—'
-  const sign = val > 0 ? '+' : ''
-  return `${sign}${Number(val).toFixed(decimals)}%`
-}
-
-function renderTabCharts(tabId) {
-  switch (tabId) {
-    case 'overview':
-      renderHeroChart()
-      renderReserveChart()
-      renderFanChart()
-      renderDistChart()
-      break
-    case 'reserves':
-      renderHeroChart()
-      renderReserveChart()
-      break
-    case 'stochastic':
-      renderHeroChart()
-      renderFanChart()
-      renderDistChart()
-      break
-    case 'cashflows':
-      renderHeroChart()
-      renderCashFlowChart()
-      break
-    case 'table':
-      renderHeroChart()
-      break
-    case 'ifrs17':
-      renderIFRS17Charts()
-      break
-    case 'portfolio':
-      renderPortfolioCharts()
-      break
-    case 'sensitivity':
-      stressTestDashboardRef.value?.resizeCharts?.()
-      break
-    case 'builder':
-      break
-  }
-}
-
 function switchTab(tabId) {
   activeTab.value = tabId
   sidebarOpen.value = false
-  nextTick(() => {
-    renderTabCharts(tabId)
-  })
+  if (tabId === 'sensitivity') {
+    nextTick(() => {
+      sensitivityDashboardRef.value?.resizeCharts?.()
+    })
+  }
 }
 
 // ────────────────────────────────────────────────────────────
@@ -418,9 +343,6 @@ async function executeValuation() {
     ifrs17Data.value = ifrs17Res
     sensitivityData.value = sensRes
     backendStatus.value = 'healthy'
-
-    await nextTick()
-    renderTabCharts(activeTab.value)
   } catch (err) {
     console.error('Valuation execution error:', err)
     backendStatus.value = 'error'
@@ -485,17 +407,9 @@ async function submitCustomTable() {
 // Portfolio Batch Upload & Processing
 // ────────────────────────────────────────────────────────────
 
-async function handlePortfolioFileUpload(event) {
-  const file = event.target.files?.[0]
+async function handlePortfolioFileUpload(file) {
   if (!file) return
   await processPortfolioFile(file)
-}
-
-function handlePortfolioDrop(event) {
-  isDragging.value = false
-  const file = event.dataTransfer?.files?.[0]
-  if (!file) return
-  processPortfolioFile(file)
 }
 
 async function processPortfolioFile(file) {
@@ -511,9 +425,6 @@ async function processPortfolioFile(file) {
     const res = await uploadPortfolioCSV(formData)
     portfolioData.value = res
     activeTab.value = 'portfolio'
-
-    await nextTick()
-    renderTabCharts('portfolio')
   } catch (err) {
     console.error('Portfolio valuation error:', err)
     portfolioError.value = err.message || 'Portfolio CSV valuation failed.'
@@ -540,458 +451,10 @@ async function runSamplePortfolioDemo(nPolicies = 1000) {
 }
 
 // ────────────────────────────────────────────────────────────
-// Shared ECharts Theme Constants (Mercury Palette)
-// ────────────────────────────────────────────────────────────
-
-const chartTooltip = {
-  backgroundColor: 'rgba(15, 23, 42, 0.96)',
-  borderColor: 'rgba(255, 255, 255, 0.08)',
-  borderWidth: 1,
-  textStyle: { color: '#E2E8F0', fontSize: 12, fontFamily: 'Inter, system-ui' },
-}
-
-const chartGrid = { top: 35, left: 60, right: 20, bottom: 30 }
-
-const chartAxisLabel = { color: '#64748B', fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }
-
-const chartSplitLine = { lineStyle: { color: 'rgba(255, 255, 255, 0.04)' } }
-
-const chartAxisLine = { lineStyle: { color: '#1E293B' } }
-
-// Mercury accent palette
-const ACCENT = {
-  blue: '#38BDF8',
-  indigo: '#6366F1',
-  emerald: '#34D399',
-  amber: '#FBBF24',
-  rose: '#F43F5E',
-  sky: '#0EA5E9',
-  violet: '#8B5CF6',
-  white: '#F8FAFC',
-  slate: '#94A3B8',
-}
-
-// ────────────────────────────────────────────────────────────
-// ECharts Render Functions (Mercury Institutional Theme)
-// ────────────────────────────────────────────────────────────
-
-function getOrCreateChart(domRef) {
-  if (!domRef) return null
-  if (domRef.clientWidth === 0 || domRef.clientHeight === 0) return null
-  let chart = echarts.getInstanceByDom(domRef)
-  if (!chart) {
-    chart = markRaw(echarts.init(domRef))
-    if (resizeObserver) {
-      resizeObserver.observe(domRef)
-    }
-  }
-  return chart
-}
-
-function renderHeroChart() {
-  if (!heroChartRef.value || !deterministicData.value?.cash_flows) return
-  heroChart = getOrCreateChart(heroChartRef.value)
-  if (!heroChart) return
-
-  const cfs = deterministicData.value.cash_flows
-  const years = cfs.map(d => `Yr ${d.year + 1}`)
-
-  let running = 0
-  const cumLiability = cfs.map(d => {
-    running += d.net_liability_cf
-    return running
-  })
-
-  const option = {
-    backgroundColor: 'transparent',
-    tooltip: { ...chartTooltip, trigger: 'axis' },
-    grid: { top: 30, left: 55, right: 20, bottom: 30 },
-    xAxis: { type: 'category', data: years, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(years.length / 10)) }, splitLine: { show: false } },
-    yAxis: { type: 'value', axisLine: { show: false }, axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: chartSplitLine },
-    series: [
-      {
-        name: 'Cumulative Liability',
-        type: 'line',
-        data: cumLiability,
-        smooth: true,
-        symbol: 'none',
-        lineStyle: { width: 2.5, color: ACCENT.blue },
-        areaStyle: {
-          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(56, 189, 248, 0.25)' },
-            { offset: 1, color: 'rgba(56, 189, 248, 0.0)' },
-          ]),
-        },
-      },
-    ],
-  }
-  heroChart.setOption(option, true)
-  heroChart.resize()
-}
-
-function renderReserveChart() {
-  if (!reserveChartRef.value || !deterministicData.value?.reserve_profile) return
-  reserveChart = getOrCreateChart(reserveChartRef.value)
-  if (!reserveChart) return
-
-  const profile = deterministicData.value.reserve_profile
-  const durations = profile.map(r => `t=${r.duration}`)
-  const prospective = profile.map(r => r.reserve_prospective)
-  const retrospective = profile.map(r => r.reserve_retrospective)
-  const gross = profile.map(r => r.gross_reserve)
-
-  const option = {
-    backgroundColor: 'transparent',
-    tooltip: { ...chartTooltip, trigger: 'axis' },
-    legend: { data: ['Prospective', 'Retrospective', 'Gross GPV'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
-    grid: chartGrid,
-    xAxis: { type: 'category', data: durations, boundaryGap: false, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(durations.length / 8)) }, splitLine: { show: true, ...chartSplitLine } },
-    yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: chartSplitLine },
-    series: [
-      {
-        name: 'Prospective',
-        type: 'line', data: prospective, smooth: true, symbol: 'circle', symbolSize: 3,
-        lineStyle: { width: 2, color: ACCENT.blue },
-        itemStyle: { color: ACCENT.blue },
-        areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(56, 189, 248, 0.18)' }, { offset: 1, color: 'rgba(56, 189, 248, 0.0)' }]) },
-      },
-      { name: 'Retrospective', type: 'line', data: retrospective, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: ACCENT.emerald, type: 'dashed' } },
-      { name: 'Gross GPV', type: 'line', data: gross, smooth: true, symbol: 'none', lineStyle: { width: 1.5, color: ACCENT.amber } },
-    ],
-  }
-  reserveChart.setOption(option, true)
-  reserveChart.resize()
-}
-
-function renderFanChart() {
-  if (!fanChartRef.value || (!stochasticData.value?.quantiles && !stochasticData.value?.fan_chart_rates)) return
-  fanChart = getOrCreateChart(fanChartRef.value)
-  if (!fanChart) return
-
-  let years = [], p5 = [], p25 = [], p50 = [], p75 = [], p95 = []
-
-  if (stochasticData.value.quantiles) {
-    const q = stochasticData.value.quantiles
-    const timesteps = stochasticData.value.timesteps || q.p50.map((_, i) => i)
-    years = timesteps.map(t => `t=${t}`)
-    p5 = q.p5.map(v => (v * 100).toFixed(2))
-    p25 = q.p25.map(v => (v * 100).toFixed(2))
-    p50 = q.p50.map(v => (v * 100).toFixed(2))
-    p75 = q.p75.map(v => (v * 100).toFixed(2))
-    p95 = q.p95.map(v => (v * 100).toFixed(2))
-  } else {
-    const rates = stochasticData.value.fan_chart_rates
-    years = rates.map(d => `t=${d.year}`)
-    p5 = rates.map(d => (d.p5 * 100).toFixed(2))
-    p25 = rates.map(d => (d.p25 * 100).toFixed(2))
-    p50 = rates.map(d => (d.p50 * 100).toFixed(2))
-    p75 = rates.map(d => (d.p75 * 100).toFixed(2))
-    p95 = rates.map(d => (d.p95 * 100).toFixed(2))
-  }
-
-  const sampleSeries = (stochasticData.value.sample_paths || []).slice(0, 10).map((path, idx) => ({
-    name: `Trace ${idx + 1}`, type: 'line', data: path.map(r => (r * 100).toFixed(2)),
-    smooth: true, symbol: 'none', lineStyle: { width: 0.7, color: 'rgba(148, 163, 184, 0.12)' }, silent: true,
-  }))
-
-  const option = {
-    backgroundColor: 'transparent',
-    tooltip: { ...chartTooltip, trigger: 'axis' },
-    legend: { data: ['p95', 'Median', 'p5'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
-    grid: chartGrid,
-    xAxis: { type: 'category', data: years, boundaryGap: false, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(years.length / 8)) }, splitLine: { show: true, ...chartSplitLine } },
-    yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: v => `${v}%` }, splitLine: chartSplitLine },
-    series: [
-      ...sampleSeries,
-      { name: 'p95', type: 'line', data: p95, smooth: true, symbol: 'none', lineStyle: { width: 1, color: 'rgba(99, 102, 241, 0.5)' }, areaStyle: { color: 'rgba(99, 102, 241, 0.08)' } },
-      { name: 'p75', type: 'line', data: p75, smooth: true, symbol: 'none', lineStyle: { width: 0.8, color: 'rgba(99, 102, 241, 0.3)' }, areaStyle: { color: 'rgba(99, 102, 241, 0.1)' } },
-      { name: 'Median', type: 'line', data: p50, smooth: true, symbol: 'none', lineStyle: { width: 2, color: ACCENT.blue } },
-      { name: 'p25', type: 'line', data: p25, smooth: true, symbol: 'none', lineStyle: { width: 0.8, color: 'rgba(99, 102, 241, 0.3)' } },
-      { name: 'p5', type: 'line', data: p5, smooth: true, symbol: 'none', lineStyle: { width: 1, color: 'rgba(99, 102, 241, 0.5)' } },
-    ],
-  }
-  fanChart.setOption(option, true)
-  fanChart.resize()
-}
-
-function renderCashFlowChart() {
-  if (!cashFlowChartRef.value || !deterministicData.value?.cash_flows) return
-  cashFlowChart = getOrCreateChart(cashFlowChartRef.value)
-  if (!cashFlowChart) return
-
-  const cfs = deterministicData.value.cash_flows
-  const years = cfs.map(d => `Yr ${d.year + 1}`)
-  const premiums = cfs.map(d => d.premium_income)
-  const claims = cfs.map(d => d.death_claims + d.maturity_benefit)
-  const expenses = cfs.map(d => d.total_expense)
-
-  const option = {
-    backgroundColor: 'transparent',
-    tooltip: { ...chartTooltip, trigger: 'axis' },
-    legend: { data: ['Premiums', 'Claims', 'Expenses'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
-    grid: chartGrid,
-    xAxis: { type: 'category', data: years, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(years.length / 8)) } },
-    yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: chartSplitLine },
-    series: [
-      { name: 'Premiums', type: 'bar', data: premiums, itemStyle: { color: ACCENT.emerald, borderRadius: [3, 3, 0, 0] } },
-      { name: 'Claims', type: 'bar', data: claims, itemStyle: { color: ACCENT.rose, borderRadius: [3, 3, 0, 0] } },
-      { name: 'Expenses', type: 'bar', data: expenses, itemStyle: { color: ACCENT.amber, borderRadius: [3, 3, 0, 0] } },
-    ],
-  }
-  cashFlowChart.setOption(option, true)
-  cashFlowChart.resize()
-}
-
-function renderDistChart() {
-  if (!distChartRef.value || (!stochasticData.value?.terminal_distribution && !stochasticData.value?.liability_histogram)) return
-  distChart = getOrCreateChart(distChartRef.value)
-  if (!distChart) return
-
-  let bins = [], counts = []
-  const var95 = stochasticData.value.var_95 || stochasticData.value.terminal_distribution?.var_95 || 0
-
-  if (stochasticData.value.terminal_distribution) {
-    const td = stochasticData.value.terminal_distribution
-    const binEdges = td.bin_edges
-    counts = td.counts.map((c, i) => {
-      const mid = (binEdges[i] + binEdges[i + 1]) / 2.0
-      return { value: c, itemStyle: { color: mid >= var95 ? ACCENT.rose : ACCENT.indigo, borderRadius: [2, 2, 0, 0] } }
-    })
-    bins = td.counts.map((_, i) => `$${((binEdges[i] + binEdges[i + 1]) / 2000.0).toFixed(1)}k`)
-  } else {
-    const hist = stochasticData.value.liability_histogram
-    bins = hist.map(d => `$${(d.bin_mid / 1000).toFixed(1)}k`)
-    counts = hist.map(d => ({ value: d.count, itemStyle: { color: d.bin_mid >= var95 ? ACCENT.rose : ACCENT.indigo, borderRadius: [2, 2, 0, 0] } }))
-  }
-
-  const option = {
-    backgroundColor: 'transparent',
-    tooltip: { ...chartTooltip, trigger: 'axis' },
-    grid: { top: 25, left: 50, right: 20, bottom: 30 },
-    xAxis: { type: 'category', data: bins, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(bins.length / 8)) } },
-    yAxis: { type: 'value', axisLabel: chartAxisLabel, splitLine: chartSplitLine },
-    series: [{ name: 'Scenarios', type: 'bar', data: counts, barWidth: '85%' }],
-  }
-  distChart.setOption(option, true)
-  distChart.resize()
-}
-
-function renderPortfolioCharts() {
-  if (!portfolioData.value) return
-
-  if (portfolioCfChartRef.value && portfolioData.value.annual_cash_flows) {
-    portfolioCfChart = getOrCreateChart(portfolioCfChartRef.value)
-    if (portfolioCfChart) {
-      const cfs = portfolioData.value.annual_cash_flows
-      const years = cfs.map(d => `Yr ${d.year}`)
-      const premiums = cfs.map(d => d.premium_income)
-      const claims = cfs.map(d => d.death_claims + d.maturity_benefits)
-      const expenses = cfs.map(d => d.total_expenses)
-      const netLiability = cfs.map(d => d.net_liability_cf)
-
-      portfolioCfChart.setOption({
-        backgroundColor: 'transparent',
-        tooltip: { ...chartTooltip, trigger: 'axis' },
-        legend: { data: ['Premiums', 'Claims', 'Expenses', 'Net Liability'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
-        grid: { top: 40, left: 70, right: 20, bottom: 30 },
-        xAxis: { type: 'category', data: years, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(years.length / 10)) } },
-        yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1_000_000).toFixed(1)}M` }, splitLine: chartSplitLine },
-        series: [
-          { name: 'Premiums', type: 'bar', stack: 'inflow', data: premiums, itemStyle: { color: ACCENT.emerald, borderRadius: [2, 2, 0, 0] } },
-          { name: 'Claims', type: 'bar', stack: 'outflow', data: claims, itemStyle: { color: ACCENT.rose, borderRadius: [2, 2, 0, 0] } },
-          { name: 'Expenses', type: 'bar', stack: 'outflow', data: expenses, itemStyle: { color: ACCENT.amber, borderRadius: [2, 2, 0, 0] } },
-          { name: 'Net Liability', type: 'line', data: netLiability, smooth: true, symbol: 'none', lineStyle: { width: 2, color: ACCENT.blue } },
-        ],
-      }, true)
-      portfolioCfChart.resize()
-    }
-  }
-
-  if (portfolioProdChartRef.value && portfolioData.value.product_breakdown) {
-    portfolioProdChart = getOrCreateChart(portfolioProdChartRef.value)
-    if (portfolioProdChart) {
-      const prodEntries = Object.entries(portfolioData.value.product_breakdown).map(([k, v]) => ({
-        name: k.replace('_', ' ').toUpperCase(), value: v.sum_assured,
-      }))
-      portfolioProdChart.setOption({
-        backgroundColor: 'transparent',
-        tooltip: { ...chartTooltip, trigger: 'item' },
-        legend: { orient: 'vertical', left: 'left', top: 'middle', textStyle: { color: ACCENT.slate, fontSize: 11 } },
-        series: [{
-          name: 'Face Amount', type: 'pie', radius: ['45%', '75%'], center: ['65%', '50%'],
-          avoidLabelOverlap: false, itemStyle: { borderRadius: 4, borderColor: '#0F172A', borderWidth: 2 },
-          label: { show: false }, data: prodEntries, color: [ACCENT.blue, ACCENT.indigo, ACCENT.emerald, ACCENT.amber],
-        }],
-      }, true)
-      portfolioProdChart.resize()
-    }
-  }
-
-  if (portfolioAgeChartRef.value && portfolioData.value.age_breakdown) {
-    portfolioAgeChart = getOrCreateChart(portfolioAgeChartRef.value)
-    if (portfolioAgeChart) {
-      const ageEntries = Object.entries(portfolioData.value.age_breakdown)
-      const categories = ageEntries.map(([k]) => k)
-      const counts = ageEntries.map(([, v]) => v.count)
-      const bels = ageEntries.map(([, v]) => v.bel)
-      portfolioAgeChart.setOption({
-        backgroundColor: 'transparent',
-        tooltip: { ...chartTooltip, trigger: 'axis' },
-        legend: { data: ['Count', 'BEL'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
-        grid: { top: 40, left: 60, right: 55, bottom: 30 },
-        xAxis: { type: 'category', data: categories, axisLine: chartAxisLine, axisLabel: chartAxisLabel },
-        yAxis: [
-          { type: 'value', name: 'Count', axisLabel: chartAxisLabel, splitLine: chartSplitLine },
-          { type: 'value', name: 'BEL', axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: { show: false } },
-        ],
-        series: [
-          { name: 'Count', type: 'bar', data: counts, itemStyle: { color: ACCENT.indigo, borderRadius: [3, 3, 0, 0] } },
-          { name: 'BEL', type: 'line', yAxisIndex: 1, data: bels, smooth: true, itemStyle: { color: ACCENT.rose } },
-        ],
-      }, true)
-      portfolioAgeChart.resize()
-    }
-  }
-}
-
-function renderIFRS17Charts() {
-  if (!ifrs17Data.value) return
-
-  if (ifrs17LrcChartRef.value && ifrs17Data.value.balance_sheet_schedule) {
-    ifrs17LrcChart = getOrCreateChart(ifrs17LrcChartRef.value)
-    if (ifrs17LrcChart) {
-      const schedule = ifrs17Data.value.balance_sheet_schedule
-      const durations = schedule.map(d => `t=${d.duration}`)
-      const bels = schedule.map(d => d.bel)
-      const ras = schedule.map(d => d.risk_adjustment)
-      const csms = schedule.map(d => d.csm)
-      const lrcs = schedule.map(d => d.total_lrc)
-
-      ifrs17LrcChart.setOption({
-        backgroundColor: 'transparent',
-        tooltip: { ...chartTooltip, trigger: 'axis' },
-        legend: { data: ['BEL', 'RA', 'CSM', 'Total LRC'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
-        grid: chartGrid,
-        xAxis: { type: 'category', data: durations, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(durations.length / 8)) } },
-        yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: chartSplitLine },
-        series: [
-          { name: 'BEL', type: 'line', stack: 'Total', data: bels, areaStyle: { color: 'rgba(56, 189, 248, 0.25)' }, lineStyle: { width: 1.5, color: ACCENT.blue }, itemStyle: { color: ACCENT.blue }, symbol: 'none' },
-          { name: 'RA', type: 'line', stack: 'Total', data: ras, areaStyle: { color: 'rgba(251, 191, 36, 0.3)' }, lineStyle: { width: 1.5, color: ACCENT.amber }, itemStyle: { color: ACCENT.amber }, symbol: 'none' },
-          { name: 'CSM', type: 'line', stack: 'Total', data: csms, areaStyle: { color: 'rgba(99, 102, 241, 0.3)' }, lineStyle: { width: 1.5, color: ACCENT.indigo }, itemStyle: { color: ACCENT.indigo }, symbol: 'none' },
-          { name: 'Total LRC', type: 'line', data: lrcs, smooth: true, lineStyle: { width: 2, color: ACCENT.white, type: 'dashed' }, itemStyle: { color: ACCENT.white }, symbol: 'none' },
-        ],
-      }, true)
-      ifrs17LrcChart.resize()
-    }
-  }
-
-  if (ifrs17PnlChartRef.value && ifrs17Data.value.income_statement_schedule) {
-    ifrs17PnlChart = getOrCreateChart(ifrs17PnlChartRef.value)
-    if (ifrs17PnlChart) {
-      const pnl = ifrs17Data.value.income_statement_schedule
-      const years = pnl.map(d => `Yr ${d.year + 1}`)
-
-      ifrs17PnlChart.setOption({
-        backgroundColor: 'transparent',
-        tooltip: { ...chartTooltip, trigger: 'axis' },
-        legend: { data: ['Revenue', 'Claims', 'Expenses', 'CSM Release', 'Service Result'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
-        grid: chartGrid,
-        xAxis: { type: 'category', data: years, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(years.length / 8)) } },
-        yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: chartSplitLine },
-        series: [
-          { name: 'Revenue', type: 'bar', data: pnl.map(d => d.insurance_revenue), itemStyle: { color: ACCENT.emerald, borderRadius: [3, 3, 0, 0] } },
-          { name: 'Claims', type: 'bar', data: pnl.map(d => d.claims_incurred), itemStyle: { color: ACCENT.rose, borderRadius: [3, 3, 0, 0] } },
-          { name: 'Expenses', type: 'bar', data: pnl.map(d => d.expenses_incurred), itemStyle: { color: ACCENT.amber, borderRadius: [3, 3, 0, 0] } },
-          { name: 'CSM Release', type: 'line', data: pnl.map(d => d.csm_amortization), smooth: true, lineStyle: { width: 2, color: ACCENT.indigo }, itemStyle: { color: ACCENT.indigo } },
-          { name: 'Service Result', type: 'line', data: pnl.map(d => d.insurance_service_result), smooth: true, lineStyle: { width: 2, color: ACCENT.blue }, itemStyle: { color: ACCENT.blue } },
-        ],
-      }, true)
-      ifrs17PnlChart.resize()
-    }
-  }
-}
-
-function renderTornadoChart() {
-  if (!tornadoChartRef.value || !sensitivityData.value?.tornado_items) return
-  tornadoChart = getOrCreateChart(tornadoChartRef.value)
-  if (!tornadoChart) return
-
-  const items = [...sensitivityData.value.tornado_items].reverse()
-  const factors = items.map(d => d.risk_factor)
-  const lowDeltas = items.map(d => d.low_delta)
-  const highDeltas = items.map(d => d.high_delta)
-
-  const option = {
-    backgroundColor: 'transparent',
-    tooltip: {
-      ...chartTooltip, trigger: 'axis', axisPointer: { type: 'shadow' },
-      formatter: (params) => {
-        if (!params || params.length === 0) return ''
-        const idx = params[0].dataIndex
-        const item = items[idx]
-        return `<div style="font-weight:600;color:#F8FAFC;margin-bottom:4px">${item.risk_factor}</div>
-          <div style="font-size:11px;color:#CBD5E1">
-            <div><span style="color:${ACCENT.emerald}">Low (${item.low_label}):</span> ${formatCurrency(item.low_delta)} (${item.low_delta_pct > 0 ? '+' : ''}${item.low_delta_pct}%)</div>
-            <div><span style="color:${ACCENT.rose}">High (${item.high_label}):</span> ${formatCurrency(item.high_delta)} (${item.high_delta_pct > 0 ? '+' : ''}${item.high_delta_pct}%)</div>
-            <div style="border-top:1px solid rgba(255,255,255,0.1);padding-top:4px;margin-top:4px;color:${ACCENT.blue};font-weight:600">Swing: ${formatCurrency(item.swing)} (${item.swing_pct}%)</div>
-          </div>`
-      },
-    },
-    legend: { data: ['Downside', 'Upside'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
-    grid: { top: 35, left: 220, right: 30, bottom: 20 },
-    xAxis: { type: 'value', axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: chartSplitLine },
-    yAxis: { type: 'category', data: factors, axisLine: chartAxisLine, axisLabel: { color: '#CBD5E1', fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }, splitLine: { show: false } },
-    series: [
-      { name: 'Downside', type: 'bar', data: lowDeltas, itemStyle: { borderRadius: [3, 3, 3, 3], color: ACCENT.blue } },
-      { name: 'Upside', type: 'bar', data: highDeltas, itemStyle: { borderRadius: [3, 3, 3, 3], color: ACCENT.rose } },
-    ],
-  }
-  tornadoChart.setOption(option, true)
-  tornadoChart.resize()
-}
-
-function renderAllCharts() {
-  renderHeroChart()
-  renderReserveChart()
-  renderFanChart()
-  renderCashFlowChart()
-  renderDistChart()
-  renderPortfolioCharts()
-  renderIFRS17Charts()
-  renderTornadoChart()
-}
-
-// ────────────────────────────────────────────────────────────
 // Lifecycle Hooks
 // ────────────────────────────────────────────────────────────
 
 onMounted(async () => {
-  resizeObserver = new ResizeObserver(() => {
-    const tab = activeTab.value
-    if (['overview', 'reserves', 'stochastic', 'cashflows', 'table'].includes(tab)) {
-      heroChart?.resize()
-    }
-    if (['overview', 'reserves'].includes(tab)) {
-      reserveChart?.resize()
-    }
-    if (['overview', 'stochastic'].includes(tab)) {
-      fanChart?.resize()
-      distChart?.resize()
-    }
-    if (tab === 'cashflows') {
-      cashFlowChart?.resize()
-    }
-    if (tab === 'ifrs17') {
-      ifrs17LrcChart?.resize()
-      ifrs17PnlChart?.resize()
-    }
-    if (tab === 'portfolio') {
-      portfolioCfChart?.resize()
-      portfolioProdChart?.resize()
-      portfolioAgeChart?.resize()
-    }
-  })
-
   await checkBackendConnection()
   await executeValuation()
 })
@@ -1001,32 +464,6 @@ onUnmounted(() => {
     activeSocketConnection.close()
     activeSocketConnection = null
   }
-  if (resizeObserver) {
-    resizeObserver.disconnect()
-    resizeObserver = null
-  }
-  heroChart?.dispose()
-  reserveChart?.dispose()
-  fanChart?.dispose()
-  cashFlowChart?.dispose()
-  distChart?.dispose()
-  portfolioCfChart?.dispose()
-  portfolioProdChart?.dispose()
-  portfolioAgeChart?.dispose()
-  ifrs17LrcChart?.dispose()
-  ifrs17PnlChart?.dispose()
-  tornadoChart?.dispose()
-  heroChart = null
-  reserveChart = null
-  fanChart = null
-  cashFlowChart = null
-  distChart = null
-  portfolioCfChart = null
-  portfolioProdChart = null
-  portfolioAgeChart = null
-  ifrs17LrcChart = null
-  ifrs17PnlChart = null
-  tornadoChart = null
 })
 </script>
 
@@ -1209,231 +646,62 @@ onUnmounted(() => {
       </div>
 
       <!-- ═══════════════════════════════════════════════════════ -->
-      <!-- OVERVIEW TAB                                            -->
+      <!-- PRIMARY CORE DASHBOARD TABS (with Form Layout)          -->
       <!-- ═══════════════════════════════════════════════════════ -->
-      <section v-show="['overview', 'reserves', 'stochastic', 'cashflows', 'table'].includes(activeTab)" class="px-6 py-4 space-y-5">
-
-        <!-- Hero Card Row -->
+      <section v-show="['overview', 'reserves', 'stochastic', 'cashflows', 'table'].includes(activeTab)" class="px-6 py-4">
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          <!-- Primary Hero: Big KPI + Chart -->
-          <div class="lg:col-span-2 card p-5">
-            <div class="flex items-center justify-between mb-1">
-              <div>
-                <div class="text-xs text-slate-500 font-medium uppercase tracking-wider">Total Portfolio BEL</div>
-                <div class="text-3xl font-semibold text-white mt-1 font-mono tracking-tight">
-                  <span v-if="loading" class="skeleton inline-block w-40 h-8"></span>
-                  <span v-else>{{ formatCurrency(stochasticData?.mean_bel ?? deterministicData?.bel) }}</span>
-                </div>
-                <div class="text-xs text-slate-500 mt-1 font-mono" v-if="stochasticData?.std_bel">
-                  σ = {{ formatCurrency(stochasticData.std_bel) }}
-                </div>
-              </div>
-              <div class="text-right space-y-1">
-                <div class="badge badge-info">{{ deterministicData?.table_name || 'SOA ILT' }}</div>
-                <div class="text-[11px] text-slate-500 font-mono capitalize">{{ form.product_type.replace('_', ' ') }}</div>
-              </div>
-            </div>
-            <div ref="heroChartRef" class="w-full h-52 mt-2"></div>
-          </div>
-
-          <!-- Summary Cards Column -->
+          <!-- Left 1/3: Modular Valuation Input Form -->
           <div class="space-y-4">
-            <div class="card p-4">
-              <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Annual Net Premium</div>
-              <div class="text-xl font-semibold text-white mt-1 font-mono">
-                <span v-if="loading" class="skeleton inline-block w-28 h-6"></span>
-                <span v-else>{{ formatCurrency(deterministicData?.annual_net_premium) }}</span>
-              </div>
-              <div class="text-[11px] text-slate-500 mt-1">ä = {{ deterministicData?.annuity_factor?.toFixed(3) || '—' }}</div>
-            </div>
-
-            <div class="card p-4">
-              <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">95% Value at Risk</div>
-              <div class="text-xl font-semibold text-rose-400 mt-1 font-mono">
-                <span v-if="loading" class="skeleton inline-block w-28 h-6"></span>
-                <span v-else>{{ formatCurrency(stochasticData?.var_95) }}</span>
-              </div>
-              <div class="text-[11px] text-slate-500 mt-1">CVaR 95%: {{ formatCurrency(stochasticData?.cvar_95) }}</div>
-            </div>
-
-            <div class="card p-4">
-              <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Gross Premium</div>
-              <div class="text-xl font-semibold text-emerald-400 mt-1 font-mono">
-                <span v-if="loading" class="skeleton inline-block w-28 h-6"></span>
-                <span v-else>{{ formatCurrency(deterministicData?.annual_gross_premium) }}</span>
-              </div>
-              <div class="text-[11px] text-slate-500 mt-1">Acquisition &amp; Renewal Loaded</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Controls + Charts Layout -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
-          <!-- Control Sidebar (1/3) -->
-          <div class="space-y-4">
-            <div class="card p-5 space-y-4">
-              <div class="text-xs font-semibold text-slate-300 uppercase tracking-wider pb-2 border-b border-white/[0.06]">Contract Parameters</div>
-
-              <!-- Table Selection -->
-              <div>
-                <div class="flex items-center justify-between mb-1">
-                  <label class="text-[11px] text-slate-400 font-medium">Mortality Table</label>
-                  <button @click="showTableModal = true" class="text-[11px] text-sky-400 hover:text-sky-300">+ Upload</button>
-                </div>
-                <select v-model="form.table_id" @change="executeValuation" class="input-field">
-                  <option v-for="t in availableTables" :key="t.table_id" :value="t.table_id">
-                    {{ t.name }} {{ t.is_builtin ? '(Built-in)' : '(Custom)' }}
-                  </option>
-                </select>
-              </div>
-
-              <!-- Product -->
-              <div>
-                <label class="text-[11px] text-slate-400 font-medium mb-1 block">Product Line</label>
-                <select v-model="form.product_type" class="input-field">
-                  <option value="endowment">Endowment Insurance</option>
-                  <option value="term">Term Life Insurance</option>
-                  <option value="whole_life">Whole Life Insurance</option>
-                  <option value="pure_endowment">Pure Endowment</option>
-                </select>
-              </div>
-
-              <div class="grid grid-cols-2 gap-3">
-                <div>
-                  <label class="text-[11px] text-slate-400 font-medium mb-1 block">Issue Age</label>
-                  <input type="number" v-model.number="form.issue_age" min="0" max="100" class="input-field" />
-                </div>
-                <div v-if="form.product_type !== 'whole_life'">
-                  <label class="text-[11px] text-slate-400 font-medium mb-1 block">Term (yrs)</label>
-                  <input type="number" v-model.number="form.term" min="1" max="80" class="input-field" />
-                </div>
-              </div>
-
-              <div>
-                <label class="text-[11px] text-slate-400 font-medium mb-1 block">Sum Assured</label>
-                <input type="number" v-model.number="form.sum_assured" step="50000" class="input-field" />
-              </div>
-
-              <!-- Economics -->
-              <div class="pt-3 border-t border-white/[0.06] space-y-3">
-                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Economics</div>
-                <div class="grid grid-cols-2 gap-3">
-                  <div>
-                    <label class="text-[10px] text-slate-500 mb-1 block">Base Rate (i)</label>
-                    <input type="number" v-model.number="form.interest_rate" step="0.005" min="0.01" max="0.20" class="input-field" />
-                  </div>
-                  <div>
-                    <label class="text-[10px] text-slate-500 mb-1 block">Acquisition (α)</label>
-                    <input type="number" v-model.number="form.expense.percent_of_premium_first" step="0.05" min="0" max="1.0" class="input-field" />
-                  </div>
-                </div>
-              </div>
-
-              <!-- Vasicek ESG -->
-              <div class="pt-3 border-t border-white/[0.06] space-y-3">
-                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Vasicek ESG</div>
-                <div class="grid grid-cols-2 gap-3">
-                  <div>
-                    <label class="text-[10px] text-slate-500 mb-1 block">κ (reversion)</label>
-                    <input type="number" v-model.number="form.vasicek.kappa" step="0.05" class="input-field" />
-                  </div>
-                  <div>
-                    <label class="text-[10px] text-slate-500 mb-1 block">θ (long-term)</label>
-                    <input type="number" v-model.number="form.vasicek.theta" step="0.005" class="input-field" />
-                  </div>
-                  <div>
-                    <label class="text-[10px] text-slate-500 mb-1 block">σ (volatility)</label>
-                    <input type="number" v-model.number="form.vasicek.sigma" step="0.005" class="input-field" />
-                  </div>
-                  <div>
-                    <label class="text-[10px] text-slate-500 mb-1 block">Paths (N)</label>
-                    <select v-model.number="form.n_scenarios" class="input-field">
-                      <option :value="1000">1,000</option>
-                      <option :value="2500">2,500</option>
-                      <option :value="5000">5,000</option>
-                      <option :value="10000">10,000</option>
-                      <option :value="25000">25,000</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Dynamic Lapse Toggle -->
-              <div class="pt-3 border-t border-white/[0.06] flex items-center justify-between">
-                <div>
-                  <div class="text-xs text-slate-300 font-medium">Dynamic Lapse</div>
-                  <div class="text-[10px] text-slate-500">S-Curve Disintermediation</div>
-                </div>
-                <div @click="form.enable_dynamic_lapse = !form.enable_dynamic_lapse" :class="['toggle-track', form.enable_dynamic_lapse ? 'active' : '']">
-                  <div class="toggle-thumb"></div>
-                </div>
-              </div>
-
-              <!-- Run Button -->
-              <button @click="executeValuation" :disabled="loading" class="btn-primary w-full py-2.5 flex items-center justify-center space-x-2 text-[13px] mt-2">
-                <svg v-if="loading" class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
-                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
-                </svg>
-                <span>{{ loading ? `Simulating (${simProgress.toFixed(0)}%)` : 'Run Valuation Engine' }}</span>
-              </button>
-            </div>
+            <ValuationForm
+              :form="form"
+              :available-tables="availableTables"
+              :loading="loading"
+              :sim-progress="simProgress"
+              @submit="executeValuation"
+              @open-table-modal="showTableModal = true"
+            />
           </div>
 
-          <!-- Charts Area (2/3) -->
+          <!-- Right 2/3: Active Dashboard View -->
           <div class="lg:col-span-2 space-y-5">
-            <!-- Reserve Profile -->
-            <div v-show="activeTab === 'overview' || activeTab === 'reserves'" class="card p-5">
-              <div class="flex items-center justify-between mb-3">
-                <div>
-                  <h3 class="text-sm font-semibold text-white">Reserve Profiles</h3>
-                  <p class="text-[11px] text-slate-500">Prospective vs Retrospective vs Gross GPV</p>
-                </div>
-                <span class="badge badge-success">Verified</span>
-              </div>
-              <div ref="reserveChartRef" class="w-full h-72"></div>
+            <!-- 1. Overview Dashboard -->
+            <div v-show="activeTab === 'overview'">
+              <OverviewDashboard
+                :deterministic-data="deterministicData"
+                :stochastic-data="stochasticData"
+                :form="form"
+                :loading="loading"
+                :is-active="activeTab === 'overview'"
+                @run-valuation="executeValuation"
+              />
             </div>
 
-            <!-- Fan Chart -->
-            <div v-show="activeTab === 'overview' || activeTab === 'stochastic'" class="card p-5">
-              <div class="flex items-center justify-between mb-3">
-                <div>
-                  <h3 class="text-sm font-semibold text-white">Short-Rate Fan Chart &amp; Quantile Bands</h3>
-                  <p class="text-[11px] text-slate-500">{{ form.n_scenarios.toLocaleString() }} simulated paths — p5 through p95</p>
-                </div>
-                <span class="badge badge-info">Vasicek ESG</span>
-              </div>
-              <div v-if="!stochasticData && !loading" class="h-72 flex flex-col items-center justify-center text-center space-y-2.5 card-inset rounded-lg">
-                <p class="text-slate-400 text-xs">No stochastic simulation data available.</p>
-                <button @click="executeValuation" class="btn-primary text-xs px-3.5 py-1.5 rounded-md">
-                  Run Valuation Engine
-                </button>
-              </div>
-              <div v-show="stochasticData || loading" ref="fanChartRef" class="w-full h-72"></div>
+            <!-- 2. Reserve Dashboard -->
+            <div v-show="activeTab === 'reserves'">
+              <ReserveDashboard
+                :deterministic-data="deterministicData"
+                :loading="loading"
+                :is-active="activeTab === 'reserves'"
+              />
             </div>
 
-            <!-- Distribution -->
-            <div v-show="activeTab === 'overview' || activeTab === 'stochastic'" class="card p-5">
-              <div class="mb-3">
-                <h3 class="text-sm font-semibold text-white">Liability Distribution &amp; Tail Risk</h3>
-                <p class="text-[11px] text-slate-500">Empirical BEL density — VaR 95% threshold</p>
-              </div>
-              <div v-if="!stochasticData && !loading" class="h-72 flex flex-col items-center justify-center text-center space-y-2.5 card-inset rounded-lg">
-                <p class="text-slate-400 text-xs">Empirical VaR/CVaR distribution will appear after valuation run.</p>
-              </div>
-              <div v-show="stochasticData || loading" ref="distChartRef" class="w-full h-72"></div>
+            <!-- 3. Stochastic & ESG Dashboard -->
+            <div v-show="activeTab === 'stochastic'">
+              <StochasticDashboard
+                :stochastic-data="stochasticData"
+                :form="form"
+                :loading="loading"
+                :is-active="activeTab === 'stochastic'"
+                @run-valuation="executeValuation"
+              />
             </div>
 
-            <!-- Cash Flow -->
-            <div v-show="activeTab === 'cashflows'" class="card p-5">
-              <div class="mb-3">
-                <h3 class="text-sm font-semibold text-white">Annual Cash Flow Breakdown</h3>
-                <p class="text-[11px] text-slate-500">Premium inflows vs claims &amp; expense outflows</p>
-              </div>
-              <div ref="cashFlowChartRef" class="w-full h-72"></div>
+            <!-- 4. Cash Flows Tab -->
+            <div v-show="activeTab === 'cashflows'">
+              <CashFlowTable :cash-flows="deterministicData?.cash_flows || []" />
             </div>
 
-            <!-- Cohort Table -->
+            <!-- 5. Cohort Data Tab -->
             <div v-show="activeTab === 'table'" class="card p-5">
               <div class="flex items-center justify-between mb-4">
                 <div>
@@ -1445,19 +713,30 @@ onUnmounted(() => {
                 <table class="data-table">
                   <thead>
                     <tr>
-                      <th>Year</th><th>Age</th><th>Inforce</th><th>Premium</th><th>Claims</th><th>Expenses</th><th>Net CF</th><th>PV Net</th>
+                      <th>Year</th>
+                      <th>Age</th>
+                      <th>Inforce</th>
+                      <th>Premium</th>
+                      <th>Claims</th>
+                      <th>Expenses</th>
+                      <th>Net CF</th>
+                      <th>PV Net</th>
                     </tr>
                   </thead>
                   <tbody>
                     <tr v-for="row in deterministicData?.cash_flows || []" :key="row.year">
-                      <td class="text-sky-400 font-semibold">t={{ row.year }}</td>
-                      <td>{{ row.age }}</td>
-                      <td class="text-slate-500">{{ (row.inforce_boy * 100).toFixed(2) }}%</td>
-                      <td class="text-emerald-400">{{ formatCurrency(row.premium_income) }}</td>
-                      <td class="text-rose-400">{{ formatCurrency(row.death_claims + row.maturity_benefit) }}</td>
-                      <td class="text-amber-400">{{ formatCurrency(row.total_expense) }}</td>
-                      <td :class="row.net_liability_cf > 0 ? 'text-rose-400 font-semibold' : 'text-emerald-400 font-semibold'">{{ formatCurrency(row.net_liability_cf) }}</td>
-                      <td :class="row.pv_net_liability > 0 ? 'text-rose-400 font-semibold' : 'text-emerald-400 font-semibold'">{{ formatCurrency(row.pv_net_liability) }}</td>
+                      <td class="text-sky-400 font-semibold font-mono">t={{ row.year }}</td>
+                      <td class="font-mono">{{ row.age }}</td>
+                      <td class="text-slate-500 font-mono">{{ (row.inforce_boy * 100).toFixed(2) }}%</td>
+                      <td class="text-emerald-400 font-mono">{{ formatCurrency(row.premium_income) }}</td>
+                      <td class="text-rose-400 font-mono">{{ formatCurrency(row.death_claims + row.maturity_benefit) }}</td>
+                      <td class="text-amber-400 font-mono">{{ formatCurrency(row.total_expense) }}</td>
+                      <td :class="['font-mono font-semibold', row.net_liability_cf > 0 ? 'text-rose-400' : 'text-emerald-400']">
+                        {{ formatCurrency(row.net_liability_cf) }}
+                      </td>
+                      <td :class="['font-mono font-semibold', row.pv_net_liability > 0 ? 'text-rose-400' : 'text-emerald-400']">
+                        {{ formatCurrency(row.pv_net_liability) }}
+                      </td>
                     </tr>
                   </tbody>
                 </table>
@@ -1470,257 +749,41 @@ onUnmounted(() => {
       <!-- ═══════════════════════════════════════════════════════ -->
       <!-- SENSITIVITY & STRESS TESTING TAB                       -->
       <!-- ═══════════════════════════════════════════════════════ -->
-      <section v-show="activeTab === 'sensitivity'" class="px-6 py-4 space-y-6">
-        <!-- Interactive Real-Time Stress Testing Sliders & Trajectory -->
-        <StressTestDashboard :contract-form="form" :is-active="activeTab === 'sensitivity'" ref="stressTestDashboardRef" />
-
-        <!-- Compound Macro-Scenarios -->
-        <div v-if="sensitivityData && sensitivityData.combined_scenarios && sensitivityData.combined_scenarios.length" class="card p-5 space-y-3">
-          <div class="flex items-center justify-between pb-2 border-b border-white/[0.06]">
-            <div>
-              <h3 class="text-sm font-semibold text-white">Standard Compound Regulatory & Macro Stress Scenarios</h3>
-              <p class="text-[11px] text-slate-500">Joint shocks evaluating severe economic & demographic downturns</p>
-            </div>
-            <span class="badge badge-warning">ERM Matrix</span>
-          </div>
-          <div class="overflow-x-auto card-inset rounded-lg max-h-[380px]">
-            <table class="data-table">
-              <thead>
-                <tr><th>Scenario</th><th>Rate Shift</th><th>Mortality</th><th>Lapse</th><th>Expense</th><th>Shocked Reserve</th><th>Delta ($)</th><th>Solvency Risk</th></tr>
-              </thead>
-              <tbody>
-                <tr v-for="sc in sensitivityData.combined_scenarios" :key="sc.scenario_id">
-                  <td>
-                    <div class="font-semibold text-white text-[11px]">{{ sc.name }}</div>
-                    <div class="text-[10px] text-slate-500">{{ sc.description }}</div>
-                  </td>
-                  <td class="font-mono text-sky-400">{{ sc.rate_shift_bps > 0 ? '+' : '' }}{{ sc.rate_shift_bps }} bps</td>
-                  <td class="font-mono text-slate-300">{{ (sc.mortality_multiplier * 100).toFixed(0) }}%</td>
-                  <td class="font-mono text-slate-300">{{ (sc.lapse_multiplier * 100).toFixed(0) }}%</td>
-                  <td class="font-mono text-slate-300">{{ (sc.expense_multiplier * 100).toFixed(0) }}%</td>
-                  <td class="text-sky-400 font-semibold font-mono">{{ formatCurrency(sc.shocked_reserve) }}</td>
-                  <td :class="['font-mono font-semibold', sc.delta_reserve > 0 ? 'text-rose-400' : 'text-emerald-400']">
-                    {{ sc.delta_reserve > 0 ? '+' : '' }}{{ formatCurrency(sc.delta_reserve) }} ({{ formatPercent(sc.delta_pct) }})
-                  </td>
-                  <td>
-                    <span :class="['badge', sc.solvency_impact === 'HIGH RISK' ? 'badge-danger' : sc.solvency_impact === 'MODERATE RISK' ? 'badge-warning' : 'badge-success']">
-                      {{ sc.solvency_impact }}
-                    </span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
+      <section v-show="activeTab === 'sensitivity'" class="px-6 py-4">
+        <SensitivityDashboard
+          :form="form"
+          :sensitivity-data="sensitivityData"
+          :is-active="activeTab === 'sensitivity'"
+          ref="sensitivityDashboardRef"
+        />
       </section>
 
       <!-- ═══════════════════════════════════════════════════════ -->
       <!-- IFRS 17 TAB                                            -->
       <!-- ═══════════════════════════════════════════════════════ -->
-      <section v-show="activeTab === 'ifrs17'" class="px-6 py-4 space-y-5">
-        <!-- Initial Recognition KPIs -->
-        <div v-if="ifrs17Data?.initial_balance" class="grid grid-cols-2 lg:grid-cols-5 gap-4">
-          <div class="card p-4">
-            <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Classification</div>
-            <div class="mt-2">
-              <span :class="['badge', ifrs17Data.initial_balance.classification === 'ONEROUS' ? 'badge-danger' : 'badge-success']">
-                {{ ifrs17Data.initial_balance.classification }}
-              </span>
-            </div>
-            <div class="text-[10px] text-slate-500 mt-2">Margin: {{ (ifrs17Data.initial_balance.profitability_margin * 100).toFixed(1) }}%</div>
-          </div>
-          <div class="card p-4">
-            <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">BEL</div>
-            <div class="text-xl font-semibold text-sky-400 mt-1 font-mono">{{ formatCurrency(ifrs17Data.initial_balance.bel_0) }}</div>
-            <div class="text-[10px] text-slate-500 mt-1">Best Estimate</div>
-          </div>
-          <div class="card p-4">
-            <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Risk Adj (RA)</div>
-            <div class="text-xl font-semibold text-amber-400 mt-1 font-mono">{{ formatCurrency(ifrs17Data.initial_balance.ra_0) }}</div>
-            <div class="text-[10px] text-slate-500 mt-1">Non-Financial Risk</div>
-          </div>
-          <div class="card p-4">
-            <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">CSM</div>
-            <div class="text-xl font-semibold text-indigo-400 mt-1 font-mono">{{ formatCurrency(ifrs17Data.initial_balance.csm_0) }}</div>
-            <div class="text-[10px] text-slate-500 mt-1">Unearned Profit</div>
-          </div>
-          <div class="card p-4">
-            <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Loss Component</div>
-            <div class="text-xl font-semibold text-rose-400 mt-1 font-mono">{{ formatCurrency(ifrs17Data.initial_balance.loss_component_0) }}</div>
-            <div class="text-[10px] text-slate-500 mt-1">Day 1 P&amp;L</div>
-          </div>
-        </div>
-
-        <!-- Charts -->
-        <div v-if="ifrs17Data" class="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          <div class="card p-5">
-            <h3 class="text-sm font-semibold text-white mb-1">LRC Stacked Trajectory</h3>
-            <p class="text-[11px] text-slate-500 mb-3">BEL + RA + CSM decomposition</p>
-            <div ref="ifrs17LrcChartRef" class="w-full h-72"></div>
-          </div>
-          <div class="card p-5">
-            <h3 class="text-sm font-semibold text-white mb-1">Insurance Service P&amp;L</h3>
-            <p class="text-[11px] text-slate-500 mb-3">Revenue, claims, expenses, CSM release</p>
-            <div ref="ifrs17PnlChartRef" class="w-full h-72"></div>
-          </div>
-        </div>
-
-        <!-- Schedules -->
-        <div v-if="ifrs17Data" class="grid grid-cols-1 lg:grid-cols-2 gap-5">
-          <div class="card p-5">
-            <h3 class="text-sm font-semibold text-white mb-1">Balance Sheet Schedule</h3>
-            <p class="text-[11px] text-slate-500 mb-3">LRC roll-forward</p>
-            <div class="overflow-x-auto card-inset rounded-lg max-h-[380px]">
-              <table class="data-table">
-                <thead><tr><th>Duration</th><th>BEL</th><th>RA</th><th>CSM</th><th>Total LRC</th></tr></thead>
-                <tbody>
-                  <tr v-for="row in ifrs17Data.balance_sheet_schedule" :key="row.duration">
-                    <td class="text-sky-400 font-semibold">t={{ row.duration }}</td>
-                    <td>{{ formatCurrency(row.bel) }}</td>
-                    <td class="text-amber-400">{{ formatCurrency(row.risk_adjustment) }}</td>
-                    <td class="text-indigo-400 font-semibold">{{ formatCurrency(row.csm) }}</td>
-                    <td class="text-white font-semibold">{{ formatCurrency(row.total_lrc) }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-          <div class="card p-5">
-            <h3 class="text-sm font-semibold text-white mb-1">Income Statement Schedule</h3>
-            <p class="text-[11px] text-slate-500 mb-3">P&amp;L recognition</p>
-            <div class="overflow-x-auto card-inset rounded-lg max-h-[380px]">
-              <table class="data-table">
-                <thead><tr><th>Year</th><th>Revenue</th><th>Expenses</th><th>CSM Release</th><th>Result</th></tr></thead>
-                <tbody>
-                  <tr v-for="row in ifrs17Data.income_statement_schedule" :key="row.year">
-                    <td class="text-emerald-400 font-semibold">Yr {{ row.year + 1 }}</td>
-                    <td class="text-emerald-400">{{ formatCurrency(row.insurance_revenue) }}</td>
-                    <td class="text-rose-400">{{ formatCurrency(row.insurance_service_expenses) }}</td>
-                    <td class="text-indigo-400 font-semibold">{{ formatCurrency(row.csm_amortization) }}</td>
-                    <td :class="row.insurance_service_result >= 0 ? 'text-emerald-400 font-semibold' : 'text-rose-400 font-semibold'">{{ formatCurrency(row.insurance_service_result) }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+      <section v-show="activeTab === 'ifrs17'" class="px-6 py-4">
+        <IFRS17Dashboard
+          :ifrs17-data="ifrs17Data"
+          :loading="loading"
+          :is-active="activeTab === 'ifrs17'"
+        />
       </section>
 
       <!-- ═══════════════════════════════════════════════════════ -->
       <!-- PORTFOLIO BATCH TAB                                     -->
       <!-- ═══════════════════════════════════════════════════════ -->
-      <section v-show="activeTab === 'portfolio'" class="px-6 py-4 space-y-5">
-        <!-- Upload Card -->
-        <div class="card p-5 space-y-4">
-          <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-white/[0.06]">
-            <div>
-              <h2 class="text-base font-semibold text-white">Seriatim Portfolio Batch Valuation</h2>
-              <p class="text-[11px] text-slate-500">Upload CSV or generate synthetic portfolios</p>
-            </div>
-            <button @click="runSamplePortfolioDemo(1000)" :disabled="portfolioLoading" class="btn-primary flex items-center space-x-1.5">
-              <svg class="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
-              </svg>
-              <span>{{ portfolioLoading ? 'Processing...' : 'Quick Demo (1,000)' }}</span>
-            </button>
-          </div>
-
-          <!-- Dropzone -->
-          <div
-            @dragover.prevent="isDragging = true"
-            @dragleave.prevent="isDragging = false"
-            @drop.prevent="handlePortfolioDrop"
-            :class="['border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition', isDragging ? 'border-sky-400 bg-sky-500/5' : 'border-white/[0.1] hover:border-sky-400/40 bg-[#0F172A]']"
-            @click="$refs.fileInput.click()"
-          >
-            <input type="file" ref="fileInput" accept=".csv" class="hidden" @change="handlePortfolioFileUpload" />
-            <div class="flex flex-col items-center space-y-2">
-              <div class="h-10 w-10 rounded-lg bg-sky-500/10 flex items-center justify-center text-sky-400">
-                <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
-                </svg>
-              </div>
-              <p class="text-sm text-slate-300">Drop your CSV here or <span class="text-sky-400">browse files</span></p>
-              <p class="text-[10px] text-slate-500 font-mono">policy_id, issue_age, term_years, sum_assured, gross_premium, product_type</p>
-            </div>
-          </div>
-
-          <div v-if="portfolioError" class="p-3 card-inset border-rose-500/20 text-rose-400 text-xs">{{ portfolioError }}</div>
-        </div>
-
-        <!-- Portfolio Summary -->
-        <div v-if="portfolioData" class="grid grid-cols-2 lg:grid-cols-5 gap-4">
-          <div class="card p-4">
-            <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Policies</div>
-            <div class="text-xl font-semibold text-white mt-1 font-mono">{{ portfolioData.total_policies.toLocaleString() }}</div>
-          </div>
-          <div class="card p-4">
-            <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Sum Assured</div>
-            <div class="text-xl font-semibold text-sky-400 mt-1 font-mono">{{ formatCurrency(portfolioData.total_sum_assured) }}</div>
-          </div>
-          <div class="card p-4">
-            <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">PV Benefits</div>
-            <div class="text-xl font-semibold text-rose-400 mt-1 font-mono">{{ formatCurrency(portfolioData.total_pvfb) }}</div>
-          </div>
-          <div class="card p-4">
-            <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">PV Premiums</div>
-            <div class="text-xl font-semibold text-emerald-400 mt-1 font-mono">{{ formatCurrency(portfolioData.total_pvfp) }}</div>
-          </div>
-          <div class="card p-4">
-            <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Total BEL</div>
-            <div class="text-xl font-semibold text-indigo-400 mt-1 font-mono">{{ formatCurrency(portfolioData.total_bel) }}</div>
-          </div>
-        </div>
-
-        <!-- Portfolio Charts -->
-        <div v-if="portfolioData" class="space-y-5">
-          <div class="card p-5">
-            <h3 class="text-sm font-semibold text-white mb-1">Aggregate Cash Flow Projection</h3>
-            <p class="text-[11px] text-slate-500 mb-3">Multi-year premium inflows, claims &amp; expenses</p>
-            <div ref="portfolioCfChartRef" class="w-full h-72"></div>
-          </div>
-          <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
-            <div class="card p-5">
-              <h3 class="text-sm font-semibold text-white mb-1">Product Composition</h3>
-              <p class="text-[11px] text-slate-500 mb-2">Face amount distribution</p>
-              <div ref="portfolioProdChartRef" class="w-full h-64"></div>
-            </div>
-            <div class="card p-5">
-              <h3 class="text-sm font-semibold text-white mb-1">Age Cohort Breakdown</h3>
-              <p class="text-[11px] text-slate-500 mb-2">Count &amp; BEL by age bracket</p>
-              <div ref="portfolioAgeChartRef" class="w-full h-64"></div>
-            </div>
-          </div>
-          <!-- Seriatim Table -->
-          <div class="card p-5">
-            <div class="flex items-center justify-between mb-4">
-              <div>
-                <h3 class="text-sm font-semibold text-white">Sample Seriatim Output</h3>
-                <p class="text-[11px] text-slate-500">First {{ portfolioData.sample_seriatim?.length || 0 }} records</p>
-              </div>
-            </div>
-            <div class="overflow-x-auto card-inset rounded-lg max-h-[420px]">
-              <table class="data-table">
-                <thead>
-                  <tr><th>Policy ID</th><th>Product</th><th>Age</th><th>Term</th><th>Face Amount</th><th>Premium</th><th>PVFB</th><th>PVFP</th><th>Net BEL</th></tr>
-                </thead>
-                <tbody>
-                  <tr v-for="pol in portfolioData.sample_seriatim" :key="pol.policy_id">
-                    <td class="text-sky-400 font-semibold">{{ pol.policy_id }}</td>
-                    <td class="uppercase text-[11px]">{{ pol.product_type }}</td>
-                    <td>{{ pol.issue_age }}</td>
-                    <td>{{ pol.term_years }} yrs</td>
-                    <td>{{ formatCurrency(pol.sum_assured) }}</td>
-                    <td class="text-emerald-400">{{ formatCurrency(pol.gross_premium) }}</td>
-                    <td class="text-rose-400">{{ formatCurrency(pol.pvfb) }}</td>
-                    <td class="text-emerald-400">{{ formatCurrency(pol.pvfp) }}</td>
-                    <td :class="pol.bel > 0 ? 'text-rose-400 font-semibold' : 'text-emerald-400 font-semibold'">{{ formatCurrency(pol.bel) }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+      <section v-show="activeTab === 'portfolio'" class="px-6 py-4">
+        <PortfolioDashboard
+          :portfolio-data="portfolioData"
+          :portfolio-loading="portfolioLoading"
+          :portfolio-error="portfolioError"
+          :portfolio-interest-rate="portfolioInterestRate"
+          :form="form"
+          :is-active="activeTab === 'portfolio'"
+          @upload-file="handlePortfolioFileUpload"
+          @run-demo="runSamplePortfolioDemo"
+          @update:portfolio-interest-rate="portfolioInterestRate = $event"
+        />
       </section>
 
       <!-- ═══════════════════════════════════════════════════════ -->
@@ -1757,7 +820,9 @@ onUnmounted(() => {
               @dragleave.prevent="isTableDragging = false"
               @drop.prevent="handleTableFileDrop"
               :class="['border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition', isTableDragging ? 'border-sky-400 bg-sky-500/5' : 'border-white/[0.1] bg-[#0F172A] hover:border-sky-400/40']"
-              @click="$refs.tableFileInput.click()"
+              @click="tableFileInput?.click()"
+              role="button"
+              tabindex="0"
             >
               <input type="file" ref="tableFileInput" accept=".csv,.tsv,.txt,.xml,.xtbml" class="hidden" @change="handleTableFileSelect" />
               <div class="flex flex-col items-center space-y-1">

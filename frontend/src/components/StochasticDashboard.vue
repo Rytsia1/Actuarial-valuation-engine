@@ -1,0 +1,290 @@
+<script setup>
+import { ref, watch, onMounted, onUnmounted, nextTick, markRaw } from 'vue'
+import * as echarts from 'echarts'
+
+const props = defineProps({
+  stochasticData: {
+    type: Object,
+    default: null,
+  },
+  form: {
+    type: Object,
+    required: true,
+  },
+  loading: {
+    type: Boolean,
+    default: false,
+  },
+  isActive: {
+    type: Boolean,
+    default: true,
+  },
+})
+
+const emit = defineEmits(['run-valuation'])
+
+const fanChartRef = ref(null)
+const distChartRef = ref(null)
+
+let fanChart = null
+let distChart = null
+let resizeObserver = null
+
+const ACCENT = {
+  blue: '#38BDF8',
+  indigo: '#6366F1',
+  emerald: '#34D399',
+  amber: '#FBBF24',
+  rose: '#F43F5E',
+  slate: '#94A3B8',
+}
+
+const chartTooltip = {
+  backgroundColor: 'rgba(15, 23, 42, 0.96)',
+  borderColor: 'rgba(255, 255, 255, 0.08)',
+  borderWidth: 1,
+  textStyle: { color: '#E2E8F0', fontSize: 12, fontFamily: 'Inter, system-ui' },
+}
+const chartGrid = { top: 35, left: 60, right: 20, bottom: 30 }
+const chartAxisLabel = { color: '#64748B', fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }
+const chartSplitLine = { lineStyle: { color: 'rgba(255, 255, 255, 0.04)' } }
+const chartAxisLine = { lineStyle: { color: '#1E293B' } }
+
+function formatCurrency(val) {
+  if (val === undefined || val === null || isNaN(val)) return '—'
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(val)
+}
+
+function getOrCreateChart(domRef) {
+  if (!domRef || domRef.clientWidth === 0 || domRef.clientHeight === 0) return null
+  let chart = echarts.getInstanceByDom(domRef)
+  if (!chart) {
+    chart = markRaw(echarts.init(domRef))
+    if (resizeObserver) {
+      resizeObserver.observe(domRef)
+    }
+  }
+  return chart
+}
+
+function renderFanChart() {
+  if (!fanChartRef.value || (!props.stochasticData?.quantiles && !props.stochasticData?.fan_chart_rates)) return
+  fanChart = getOrCreateChart(fanChartRef.value)
+  if (!fanChart) return
+
+  let years = [], p5 = [], p25 = [], p50 = [], p75 = [], p95 = []
+
+  if (props.stochasticData.quantiles) {
+    const q = props.stochasticData.quantiles
+    const timesteps = props.stochasticData.timesteps || q.p50.map((_, i) => i)
+    years = timesteps.map(t => `t=${t}`)
+    p5 = q.p5.map(v => (v * 100).toFixed(2))
+    p25 = q.p25.map(v => (v * 100).toFixed(2))
+    p50 = q.p50.map(v => (v * 100).toFixed(2))
+    p75 = q.p75.map(v => (v * 100).toFixed(2))
+    p95 = q.p95.map(v => (v * 100).toFixed(2))
+  } else {
+    const rates = props.stochasticData.fan_chart_rates
+    years = rates.map(d => `t=${d.year}`)
+    p5 = rates.map(d => (d.p5 * 100).toFixed(2))
+    p25 = rates.map(d => (d.p25 * 100).toFixed(2))
+    p50 = rates.map(d => (d.p50 * 100).toFixed(2))
+    p75 = rates.map(d => (d.p75 * 100).toFixed(2))
+    p95 = rates.map(d => (d.p95 * 100).toFixed(2))
+  }
+
+  const sampleSeries = (props.stochasticData.sample_paths || []).slice(0, 10).map((path, idx) => ({
+    name: `Trace ${idx + 1}`,
+    type: 'line',
+    data: path.map(r => (r * 100).toFixed(2)),
+    smooth: true,
+    symbol: 'none',
+    lineStyle: { width: 0.7, color: 'rgba(148, 163, 184, 0.12)' },
+    silent: true,
+  }))
+
+  const option = {
+    backgroundColor: 'transparent',
+    tooltip: { ...chartTooltip, trigger: 'axis' },
+    legend: { data: ['p95', 'Median', 'p5'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
+    grid: chartGrid,
+    xAxis: {
+      type: 'category',
+      data: years,
+      boundaryGap: false,
+      axisLine: chartAxisLine,
+      axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(years.length / 8)) },
+      splitLine: { show: true, ...chartSplitLine },
+    },
+    yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: v => `${v}%` }, splitLine: chartSplitLine },
+    series: [
+      ...sampleSeries,
+      { name: 'p95', type: 'line', data: p95, smooth: true, symbol: 'none', lineStyle: { width: 1.2, color: 'rgba(99, 102, 241, 0.6)' }, areaStyle: { color: 'rgba(99, 102, 241, 0.08)' } },
+      { name: 'p75', type: 'line', data: p75, smooth: true, symbol: 'none', lineStyle: { width: 0.9, color: 'rgba(99, 102, 241, 0.4)' }, areaStyle: { color: 'rgba(99, 102, 241, 0.1)' } },
+      { name: 'Median', type: 'line', data: p50, smooth: true, symbol: 'none', lineStyle: { width: 2.2, color: ACCENT.blue } },
+      { name: 'p25', type: 'line', data: p25, smooth: true, symbol: 'none', lineStyle: { width: 0.9, color: 'rgba(99, 102, 241, 0.4)' } },
+      { name: 'p5', type: 'line', data: p5, smooth: true, symbol: 'none', lineStyle: { width: 1.2, color: 'rgba(99, 102, 241, 0.6)' } },
+    ],
+  }
+  fanChart.setOption(option, true)
+  fanChart.resize()
+}
+
+function renderDistChart() {
+  if (!distChartRef.value || (!props.stochasticData?.terminal_distribution && !props.stochasticData?.liability_histogram)) return
+  distChart = getOrCreateChart(distChartRef.value)
+  if (!distChart) return
+
+  let bins = [], counts = []
+  const var95 = props.stochasticData.var_95 || props.stochasticData.terminal_distribution?.var_95 || 0
+
+  if (props.stochasticData.terminal_distribution) {
+    const td = props.stochasticData.terminal_distribution
+    const binEdges = td.bin_edges
+    counts = td.counts.map((c, i) => {
+      const mid = (binEdges[i] + binEdges[i + 1]) / 2.0
+      return { value: c, itemStyle: { color: mid >= var95 ? ACCENT.rose : ACCENT.indigo, borderRadius: [2, 2, 0, 0] } }
+    })
+    bins = td.counts.map((_, i) => `$${((binEdges[i] + binEdges[i + 1]) / 2000.0).toFixed(1)}k`)
+  } else {
+    const hist = props.stochasticData.liability_histogram
+    bins = hist.map(d => `$${(d.bin_mid / 1000).toFixed(1)}k`)
+    counts = hist.map(d => ({
+      value: d.count,
+      itemStyle: { color: d.bin_mid >= var95 ? ACCENT.rose : ACCENT.indigo, borderRadius: [2, 2, 0, 0] },
+    }))
+  }
+
+  const option = {
+    backgroundColor: 'transparent',
+    tooltip: { ...chartTooltip, trigger: 'axis' },
+    grid: { top: 25, left: 50, right: 20, bottom: 30 },
+    xAxis: { type: 'category', data: bins, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(bins.length / 8)) } },
+    yAxis: { type: 'value', axisLabel: chartAxisLabel, splitLine: chartSplitLine },
+    series: [{ name: 'Scenarios', type: 'bar', data: counts, barWidth: '85%' }],
+  }
+  distChart.setOption(option, true)
+  distChart.resize()
+}
+
+function renderAllCharts() {
+  if (!props.isActive) return
+  renderFanChart()
+  renderDistChart()
+}
+
+watch(
+  () => [props.stochasticData, props.isActive],
+  () => {
+    if (props.isActive) {
+      nextTick(renderAllCharts)
+    }
+  },
+  { deep: true }
+)
+
+onMounted(() => {
+  resizeObserver = new ResizeObserver(() => {
+    if (props.isActive) {
+      fanChart?.resize()
+      distChart?.resize()
+    }
+  })
+  if (props.isActive) {
+    nextTick(renderAllCharts)
+  }
+})
+
+onUnmounted(() => {
+  resizeObserver?.disconnect()
+  fanChart?.dispose()
+  distChart?.dispose()
+})
+</script>
+
+<template>
+  <div class="space-y-5">
+    <!-- Tail Risk Metrics Header Row -->
+    <div v-if="stochasticData" class="grid grid-cols-2 lg:grid-cols-6 gap-4">
+      <div class="card p-4">
+        <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Mean BEL</div>
+        <div class="text-xl font-semibold text-white mt-1 font-mono">{{ formatCurrency(stochasticData.mean_bel) }}</div>
+        <div class="text-[10px] text-slate-500 mt-1">Expected Path Value</div>
+      </div>
+      <div class="card p-4">
+        <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Volatility (σ)</div>
+        <div class="text-xl font-semibold text-sky-400 mt-1 font-mono">{{ formatCurrency(stochasticData.std_bel) }}</div>
+        <div class="text-[10px] text-slate-500 mt-1">Standard Deviation</div>
+      </div>
+      <div class="card p-4">
+        <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">VaR 95%</div>
+        <div class="text-xl font-semibold text-rose-400 mt-1 font-mono">{{ formatCurrency(stochasticData.var_95) }}</div>
+        <div class="text-[10px] text-slate-500 mt-1">95th Percentile</div>
+      </div>
+      <div class="card p-4">
+        <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">CVaR / CTE 95</div>
+        <div class="text-xl font-semibold text-amber-400 mt-1 font-mono">{{ formatCurrency(stochasticData.cvar_95) }}</div>
+        <div class="text-[10px] text-slate-500 mt-1">Tail Conditional Expectation</div>
+      </div>
+      <div class="card p-4">
+        <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">VaR 99%</div>
+        <div class="text-xl font-semibold text-rose-500 mt-1 font-mono">{{ formatCurrency(stochasticData.var_99) }}</div>
+        <div class="text-[10px] text-slate-500 mt-1">Extreme Solvency Level</div>
+      </div>
+      <div class="card p-4">
+        <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Skewness</div>
+        <div class="text-xl font-semibold text-indigo-400 mt-1 font-mono">
+          {{ stochasticData.terminal_distribution?.skewness?.toFixed(2) ?? '—' }}
+        </div>
+        <div class="text-[10px] text-slate-500 mt-1">Distribution Asymmetry</div>
+      </div>
+    </div>
+
+    <!-- Empty State Prompt -->
+    <div v-if="!stochasticData && !loading" class="card p-12 text-center space-y-3">
+      <div class="h-12 w-12 mx-auto rounded-full bg-sky-500/10 flex items-center justify-center text-sky-400">
+        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3l1 3m0 0l.5 1.5m-.5-1.5h-9.5m0 0l-.5 1.5" />
+        </svg>
+      </div>
+      <h3 class="text-base font-semibold text-white">Stochastic ESG &amp; Risk Simulation</h3>
+      <p class="text-xs text-slate-400 max-w-md mx-auto">
+        Run Monte Carlo simulations with mean-reverting Vasicek interest rate diffusion and dynamic S-curve surrender behavior.
+      </p>
+      <button @click="emit('run-valuation')" type="button" class="btn-primary text-xs px-4 py-2 rounded-md">
+        Run Monte Carlo Simulation
+      </button>
+    </div>
+
+    <!-- Fan Chart & Distribution Grid -->
+    <div v-show="stochasticData || loading" class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+      <!-- Fan Chart -->
+      <div class="card p-5">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <h3 class="text-sm font-semibold text-white">Short-Rate Quantile Fan Chart</h3>
+            <p class="text-[11px] text-slate-500">{{ form.n_scenarios.toLocaleString() }} simulated paths — p5 through p95</p>
+          </div>
+          <span class="badge badge-info">Vasicek ESG</span>
+        </div>
+        <div ref="fanChartRef" class="w-full h-80"></div>
+      </div>
+
+      <!-- Empirical Density Distribution -->
+      <div class="card p-5">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <h3 class="text-sm font-semibold text-white">Terminal Liability Distribution</h3>
+            <p class="text-[11px] text-slate-500">Empirical BEL density with VaR 95% tail highlighted in red</p>
+          </div>
+          <span class="badge badge-danger">Tail Risk</span>
+        </div>
+        <div ref="distChartRef" class="w-full h-80"></div>
+      </div>
+    </div>
+  </div>
+</template>
