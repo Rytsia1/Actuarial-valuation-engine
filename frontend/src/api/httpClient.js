@@ -48,6 +48,11 @@ httpClient.interceptors.response.use(
     return response.data
   },
   (error) => {
+    // 0. Request Cancellation / Aborted by User
+    if (axios.isCancel(error) || error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
+      return Promise.reject(error)
+    }
+
     // 1. Timeout / Network Abort
     if (error.code === 'ECONNABORTED' || error.message?.includes('timeout')) {
       const timeoutErr = new ActuaryApiError(

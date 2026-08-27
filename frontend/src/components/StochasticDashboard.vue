@@ -15,6 +15,10 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  error: {
+    type: String,
+    default: null,
+  },
   isActive: {
     type: Boolean,
     default: true,
@@ -77,20 +81,15 @@ const fanChartOption = computed(() => {
     p95 = rates.map(d => (d.p95 * 100).toFixed(2))
   }
 
-  const sampleSeries = (stoch.sample_paths || []).slice(0, 10).map((path, idx) => ({
-    name: `Trace ${idx + 1}`,
-    type: 'line',
-    data: path.map(r => (r * 100).toFixed(2)),
-    smooth: true,
-    symbol: 'none',
-    lineStyle: { width: 0.7, color: 'rgba(148, 163, 184, 0.12)' },
-    silent: true,
-  }))
-
   return {
     backgroundColor: 'transparent',
     tooltip: { ...chartTooltip, trigger: 'axis' },
-    legend: { data: ['p95', 'Median', 'p5'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
+    legend: {
+      data: ['p95', 'p75', 'Median (p50)', 'p25', 'p5'],
+      textStyle: { color: ACCENT.slate, fontSize: 11 },
+      top: 0,
+      right: 10,
+    },
     grid: chartGrid,
     xAxis: {
       type: 'category',
@@ -100,14 +99,54 @@ const fanChartOption = computed(() => {
       axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(years.length / 8)) },
       splitLine: { show: true, ...chartSplitLine },
     },
-    yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: v => `${v}%` }, splitLine: chartSplitLine },
+    yAxis: {
+      type: 'value',
+      axisLabel: { ...chartAxisLabel, formatter: v => `${v}%` },
+      splitLine: chartSplitLine,
+    },
     series: [
-      ...sampleSeries,
-      { name: 'p95', type: 'line', data: p95, smooth: true, symbol: 'none', lineStyle: { width: 1.2, color: 'rgba(99, 102, 241, 0.6)' }, areaStyle: { color: 'rgba(99, 102, 241, 0.08)' } },
-      { name: 'p75', type: 'line', data: p75, smooth: true, symbol: 'none', lineStyle: { width: 0.9, color: 'rgba(99, 102, 241, 0.4)' }, areaStyle: { color: 'rgba(99, 102, 241, 0.1)' } },
-      { name: 'Median', type: 'line', data: p50, smooth: true, symbol: 'none', lineStyle: { width: 2.2, color: ACCENT.blue } },
-      { name: 'p25', type: 'line', data: p25, smooth: true, symbol: 'none', lineStyle: { width: 0.9, color: 'rgba(99, 102, 241, 0.4)' } },
-      { name: 'p5', type: 'line', data: p5, smooth: true, symbol: 'none', lineStyle: { width: 1.2, color: 'rgba(99, 102, 241, 0.6)' } },
+      {
+        name: 'p95',
+        type: 'line',
+        data: p95,
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 1, color: 'rgba(99, 102, 241, 0.5)' },
+        areaStyle: { color: 'rgba(99, 102, 241, 0.08)' },
+      },
+      {
+        name: 'p75',
+        type: 'line',
+        data: p75,
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 0.8, color: 'rgba(99, 102, 241, 0.3)' },
+        areaStyle: { color: 'rgba(99, 102, 241, 0.1)' },
+      },
+      {
+        name: 'Median (p50)',
+        type: 'line',
+        data: p50,
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 2, color: ACCENT.blue },
+      },
+      {
+        name: 'p25',
+        type: 'line',
+        data: p25,
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 0.8, color: 'rgba(99, 102, 241, 0.3)' },
+      },
+      {
+        name: 'p5',
+        type: 'line',
+        data: p5,
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 1, color: 'rgba(99, 102, 241, 0.5)' },
+      },
     ],
   }
 })
@@ -149,6 +188,27 @@ const distChartOption = computed(() => {
 
 <template>
   <div class="space-y-5">
+    <!-- Error Alert Banner -->
+    <div
+      v-if="error"
+      class="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center justify-between shadow-lg"
+    >
+      <div class="flex items-center space-x-2.5">
+        <span class="h-2 w-2 rounded-full bg-rose-400"></span>
+        <div>
+          <strong class="font-semibold text-rose-200">Stochastic Simulation Error:</strong>
+          <span class="ml-1 text-rose-300/90">{{ error }}</span>
+        </div>
+      </div>
+      <button
+        @click="emit('run-valuation')"
+        type="button"
+        class="btn-secondary text-[11px] px-3 py-1 rounded-md border-rose-500/30 text-rose-200 hover:bg-rose-500/20 transition"
+      >
+        Retry
+      </button>
+    </div>
+
     <!-- Tail Risk Metrics Header Row -->
     <div v-if="stochasticData" class="grid grid-cols-2 lg:grid-cols-6 gap-4">
       <div class="card p-4">
@@ -186,7 +246,7 @@ const distChartOption = computed(() => {
     </div>
 
     <!-- Empty State Prompt -->
-    <div v-if="!stochasticData && !loading" class="card p-12 text-center space-y-3">
+    <div v-if="!stochasticData && !loading && !error" class="card p-12 text-center space-y-3">
       <div class="h-12 w-12 mx-auto rounded-full bg-sky-500/10 flex items-center justify-center text-sky-400">
         <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3l1 3m0 0l.5 1.5m-.5-1.5h-9.5m0 0l-.5 1.5" />

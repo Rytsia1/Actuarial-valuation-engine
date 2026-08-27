@@ -129,7 +129,16 @@ function resetToBaseline() {
 // API Fetch & Debounce Orchestration (~120ms-150ms)
 // ────────────────────────────────────────────────────────────
 
+let currentStressReqId = 0
+let currentStressAbort = null
+
 async function fetchStressTest() {
+  if (currentStressAbort) {
+    try { currentStressAbort.abort() } catch (_) {}
+  }
+  currentStressAbort = new AbortController()
+  const reqId = ++currentStressReqId
+
   loading.value = true
   error.value = null
 
@@ -155,13 +164,20 @@ async function fetchStressTest() {
       },
     }
 
-    const res = await runStressTest(payload)
+    const res = await runStressTest(payload, { signal: currentStressAbort.signal })
+    if (reqId !== currentStressReqId) return // Discard stale out-of-order response
+
     stressData.value = res
   } catch (err) {
+    if (reqId !== currentStressReqId) return
+    if (err?.name === 'CanceledError' || err?.name === 'AbortError' || err?.code === 'ERR_CANCELED') return
+
     console.error('Stress test valuation failed:', err)
     error.value = err?.message || 'Failed to calculate stress test.'
   } finally {
-    loading.value = false
+    if (reqId === currentStressReqId) {
+      loading.value = false
+    }
   }
 }
 

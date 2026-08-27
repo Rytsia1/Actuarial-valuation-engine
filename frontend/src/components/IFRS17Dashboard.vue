@@ -11,11 +11,17 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  error: {
+    type: String,
+    default: null,
+  },
   isActive: {
     type: Boolean,
     default: true,
   },
 })
+
+const emit = defineEmits(['run-valuation'])
 
 const ACCENT = {
   blue: '#38BDF8',
@@ -60,15 +66,31 @@ const lrcChartOption = computed(() => {
   return {
     backgroundColor: 'transparent',
     tooltip: { ...chartTooltip, trigger: 'axis' },
-    legend: { data: ['BEL', 'RA', 'CSM', 'Total LRC'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
+    legend: {
+      data: ['BEL', 'Risk Adjustment', 'CSM', 'Total LRC'],
+      textStyle: { color: ACCENT.slate, fontSize: 11 },
+      top: 0,
+      right: 10,
+    },
     grid: chartGrid,
-    xAxis: { type: 'category', data: durations, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(durations.length / 8)) } },
-    yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: chartSplitLine },
+    xAxis: {
+      type: 'category',
+      data: durations,
+      boundaryGap: false,
+      axisLine: chartAxisLine,
+      axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(durations.length / 8)) },
+      splitLine: { show: true, ...chartSplitLine },
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` },
+      splitLine: chartSplitLine,
+    },
     series: [
-      { name: 'BEL', type: 'line', stack: 'Total', data: bels, areaStyle: { color: 'rgba(56, 189, 248, 0.25)' }, lineStyle: { width: 1.5, color: ACCENT.blue }, itemStyle: { color: ACCENT.blue }, symbol: 'none' },
-      { name: 'RA', type: 'line', stack: 'Total', data: ras, areaStyle: { color: 'rgba(251, 191, 36, 0.3)' }, lineStyle: { width: 1.5, color: ACCENT.amber }, itemStyle: { color: ACCENT.amber }, symbol: 'none' },
-      { name: 'CSM', type: 'line', stack: 'Total', data: csms, areaStyle: { color: 'rgba(99, 102, 241, 0.3)' }, lineStyle: { width: 1.5, color: ACCENT.indigo }, itemStyle: { color: ACCENT.indigo }, symbol: 'none' },
-      { name: 'Total LRC', type: 'line', data: lrcs, smooth: true, lineStyle: { width: 2, color: ACCENT.white, type: 'dashed' }, itemStyle: { color: ACCENT.white }, symbol: 'none' },
+      { name: 'BEL', type: 'line', stack: 'lrc', areaStyle: { color: 'rgba(56, 189, 248, 0.4)' }, lineStyle: { width: 1.5, color: ACCENT.blue }, data: bels, smooth: true, symbol: 'none' },
+      { name: 'Risk Adjustment', type: 'line', stack: 'lrc', areaStyle: { color: 'rgba(251, 191, 36, 0.4)' }, lineStyle: { width: 1.5, color: ACCENT.amber }, data: ras, smooth: true, symbol: 'none' },
+      { name: 'CSM', type: 'line', stack: 'lrc', areaStyle: { color: 'rgba(99, 102, 241, 0.4)' }, lineStyle: { width: 1.5, color: ACCENT.indigo }, data: csms, smooth: true, symbol: 'none' },
+      { name: 'Total LRC', type: 'line', lineStyle: { width: 2.5, color: ACCENT.white }, data: lrcs, smooth: true, symbol: 'circle', symbolSize: 3, itemStyle: { color: ACCENT.white } },
     ],
   }
 })
@@ -78,20 +100,37 @@ const pnlChartOption = computed(() => {
   if (!pnl || !pnl.length) return null
 
   const years = pnl.map(d => `Yr ${d.year + 1}`)
+  const revenues = pnl.map(d => d.insurance_revenue)
+  const expenses = pnl.map(d => d.insurance_service_expenses)
+  const csms = pnl.map(d => d.csm_amortization)
+  const results = pnl.map(d => d.insurance_service_result)
 
   return {
     backgroundColor: 'transparent',
     tooltip: { ...chartTooltip, trigger: 'axis' },
-    legend: { data: ['Revenue', 'Claims', 'Expenses', 'CSM Release', 'Service Result'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
+    legend: {
+      data: ['Insurance Revenue', 'Service Expenses', 'CSM Release', 'Net Result'],
+      textStyle: { color: ACCENT.slate, fontSize: 11 },
+      top: 0,
+      right: 10,
+    },
     grid: chartGrid,
-    xAxis: { type: 'category', data: years, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(years.length / 8)) } },
-    yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: chartSplitLine },
+    xAxis: {
+      type: 'category',
+      data: years,
+      axisLine: chartAxisLine,
+      axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(years.length / 8)) },
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` },
+      splitLine: chartSplitLine,
+    },
     series: [
-      { name: 'Revenue', type: 'bar', data: pnl.map(d => d.insurance_revenue), itemStyle: { color: ACCENT.emerald, borderRadius: [3, 3, 0, 0] } },
-      { name: 'Claims', type: 'bar', data: pnl.map(d => d.claims_incurred), itemStyle: { color: ACCENT.rose, borderRadius: [3, 3, 0, 0] } },
-      { name: 'Expenses', type: 'bar', data: pnl.map(d => d.expenses_incurred), itemStyle: { color: ACCENT.amber, borderRadius: [3, 3, 0, 0] } },
-      { name: 'CSM Release', type: 'line', data: pnl.map(d => d.csm_amortization), smooth: true, lineStyle: { width: 2, color: ACCENT.indigo }, itemStyle: { color: ACCENT.indigo } },
-      { name: 'Service Result', type: 'line', data: pnl.map(d => d.insurance_service_result), smooth: true, lineStyle: { width: 2, color: ACCENT.blue }, itemStyle: { color: ACCENT.blue } },
+      { name: 'Insurance Revenue', type: 'bar', data: revenues, itemStyle: { color: ACCENT.emerald, borderRadius: [2, 2, 0, 0] } },
+      { name: 'Service Expenses', type: 'bar', data: expenses, itemStyle: { color: ACCENT.rose, borderRadius: [2, 2, 0, 0] } },
+      { name: 'CSM Release', type: 'line', data: csms, lineStyle: { width: 2, color: ACCENT.indigo }, itemStyle: { color: ACCENT.indigo }, smooth: true },
+      { name: 'Net Result', type: 'line', data: results, lineStyle: { width: 2, color: ACCENT.blue }, itemStyle: { color: ACCENT.blue }, smooth: true },
     ],
   }
 })
@@ -99,24 +138,57 @@ const pnlChartOption = computed(() => {
 
 <template>
   <div class="space-y-5">
-    <!-- Initial Recognition KPIs -->
-    <div v-if="ifrs17Data?.initial_balance" class="grid grid-cols-2 lg:grid-cols-5 gap-4">
-      <div class="card p-4">
-        <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Classification</div>
-        <div class="mt-2">
-          <span :class="['badge', ifrs17Data.initial_balance.classification === 'ONEROUS' ? 'badge-danger' : 'badge-success']">
-            {{ ifrs17Data.initial_balance.classification }}
-          </span>
+    <!-- Error Alert Banner -->
+    <div
+      v-if="error"
+      class="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center justify-between shadow-lg"
+    >
+      <div class="flex items-center space-x-2.5">
+        <span class="h-2 w-2 rounded-full bg-rose-400"></span>
+        <div>
+          <strong class="font-semibold text-rose-200">IFRS 17 Valuation Error:</strong>
+          <span class="ml-1 text-rose-300/90">{{ error }}</span>
         </div>
-        <div class="text-[10px] text-slate-500 mt-2">Margin: {{ (ifrs17Data.initial_balance.profitability_margin * 100).toFixed(1) }}%</div>
+      </div>
+      <button
+        @click="emit('run-valuation')"
+        type="button"
+        class="btn-secondary text-[11px] px-3 py-1 rounded-md border-rose-500/30 text-rose-200 hover:bg-rose-500/20 transition"
+      >
+        Retry
+      </button>
+    </div>
+
+    <!-- Empty State -->
+    <div v-if="!ifrs17Data && !loading && !error" class="card p-12 text-center space-y-3">
+      <div class="h-12 w-12 mx-auto rounded-full bg-sky-500/10 flex items-center justify-center text-sky-400">
+        <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+        </svg>
+      </div>
+      <h3 class="text-base font-semibold text-white">IFRS 17 General Measurement Model (GMM)</h3>
+      <p class="text-xs text-slate-400 max-w-md mx-auto">
+        Compute initial contract recognition, Liability for Remaining Coverage (LRC), Contractual Service Margin (CSM), and systematic P&amp;L release schedule.
+      </p>
+      <button @click="emit('run-valuation')" type="button" class="btn-primary text-xs px-4 py-2 rounded-md">
+        Run IFRS 17 Valuation
+      </button>
+    </div>
+
+    <!-- Initial Recognition Balance Sheet KPI Cards -->
+    <div v-if="ifrs17Data" class="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div class="card p-4">
+        <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Initial LRC (L_0)</div>
+        <div class="text-xl font-semibold text-white mt-1 font-mono">{{ formatCurrency(ifrs17Data.initial_balance.total_lrc_0) }}</div>
+        <div class="text-[10px] text-slate-500 mt-1">Total Liability</div>
       </div>
       <div class="card p-4">
-        <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">BEL</div>
-        <div class="text-xl font-semibold text-sky-400 mt-1 font-mono">{{ formatCurrency(ifrs17Data.initial_balance.bel_0) }}</div>
-        <div class="text-[10px] text-slate-500 mt-1">Best Estimate</div>
+        <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Fulfillment Cash Flows</div>
+        <div class="text-xl font-semibold text-sky-400 mt-1 font-mono">{{ formatCurrency(ifrs17Data.initial_balance.fcf_0) }}</div>
+        <div class="text-[10px] text-slate-500 mt-1">BEL + RA</div>
       </div>
       <div class="card p-4">
-        <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Risk Adj (RA)</div>
+        <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Risk Adjustment</div>
         <div class="text-xl font-semibold text-amber-400 mt-1 font-mono">{{ formatCurrency(ifrs17Data.initial_balance.ra_0) }}</div>
         <div class="text-[10px] text-slate-500 mt-1">Non-Financial Risk</div>
       </div>

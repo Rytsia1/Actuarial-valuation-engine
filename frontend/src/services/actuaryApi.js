@@ -1,6 +1,6 @@
 /**
  * Actuarial Engine API Service
- * Centralized API interface using Axios with global interceptors, automatic error handling, and timeout safety.
+ * Centralized API interface using Axios with global interceptors, automatic error handling, timeout safety, and AbortController signal support.
  */
 
 import httpClient, { ActuaryApiError } from '../api/httpClient'
@@ -14,16 +14,16 @@ const API_BASE = BASE_URL ? `${BASE_URL}/api/v1` : '/api/v1'
  * Health check endpoint
  * GET /api/v1/health
  */
-export async function checkHealth() {
-  return await httpClient.get('/health')
+export async function checkHealth(config = {}) {
+  return await httpClient.get('/health', config)
 }
 
 /**
  * List all available mortality tables (built-in and custom uploaded)
  * GET /api/v1/tables
  */
-export async function fetchTables() {
-  return await httpClient.get('/tables')
+export async function fetchTables(config = {}) {
+  return await httpClient.get('/tables', config)
 }
 
 /**
@@ -31,10 +31,11 @@ export async function fetchTables() {
  * POST /api/v1/tables/upload
  * 
  * @param {FormData} formData - Contains 'file', 'table_name', 'table_description'
+ * @param {Object} config - Optional Axios request config
  * @returns {Promise<Object>} TableUploadResponse
  */
-export async function uploadMortalityTable(formData) {
-  return await httpClient.post('/tables/upload', formData)
+export async function uploadMortalityTable(formData, config = {}) {
+  return await httpClient.post('/tables/upload', formData, config)
 }
 
 /**
@@ -42,10 +43,11 @@ export async function uploadMortalityTable(formData) {
  * DELETE /api/v1/tables/{table_id}
  * 
  * @param {string} tableId - ID of table to delete
+ * @param {Object} config - Optional Axios request config
  * @returns {Promise<Object>} Status response
  */
-export async function deleteMortalityTable(tableId) {
-  return await httpClient.delete(`/tables/${encodeURIComponent(tableId)}`)
+export async function deleteMortalityTable(tableId, config = {}) {
+  return await httpClient.delete(`/tables/${encodeURIComponent(tableId)}`, config)
 }
 
 /**
@@ -53,10 +55,11 @@ export async function deleteMortalityTable(tableId) {
  * POST /api/v1/valuation/deterministic
  * 
  * @param {Object} payload - DeterministicValuationRequest
+ * @param {Object} config - Optional Axios request config
  * @returns {Promise<Object>} DeterministicValuationResponse
  */
-export async function runDeterministicValuation(payload) {
-  return await httpClient.post('/valuation/deterministic', payload)
+export async function runDeterministicValuation(payload, config = {}) {
+  return await httpClient.post('/valuation/deterministic', payload, config)
 }
 
 /**
@@ -64,10 +67,11 @@ export async function runDeterministicValuation(payload) {
  * POST /api/v1/valuation/ifrs17
  * 
  * @param {Object} payload - IFRS17ValuationRequest
+ * @param {Object} config - Optional Axios request config
  * @returns {Promise<Object>} IFRS17ValuationResponse
  */
-export async function runIFRS17Valuation(payload) {
-  return await httpClient.post('/valuation/ifrs17', payload)
+export async function runIFRS17Valuation(payload, config = {}) {
+  return await httpClient.post('/valuation/ifrs17', payload, config)
 }
 
 /**
@@ -75,10 +79,11 @@ export async function runIFRS17Valuation(payload) {
  * POST /api/v1/valuation/stochastic/async
  * 
  * @param {Object} payload - StochasticValuationRequest
+ * @param {Object} config - Optional Axios request config
  * @returns {Promise<Object>} AsyncJobCreateResponse { job_id, status }
  */
-export async function startAsyncStochasticValuation(payload) {
-  return await httpClient.post('/valuation/stochastic/async', payload)
+export async function startAsyncStochasticValuation(payload, config = {}) {
+  return await httpClient.post('/valuation/stochastic/async', payload, config)
 }
 
 /**
@@ -86,10 +91,11 @@ export async function startAsyncStochasticValuation(payload) {
  * GET /api/v1/valuation/stochastic/status/{job_id}
  * 
  * @param {string} jobId - UUID of the async job
+ * @param {Object} config - Optional Axios request config
  * @returns {Promise<Object>} AsyncJobStatusResponse
  */
-export async function getStochasticJobStatus(jobId) {
-  return await httpClient.get(`/valuation/stochastic/status/${encodeURIComponent(jobId)}`)
+export async function getStochasticJobStatus(jobId, config = {}) {
+  return await httpClient.get(`/valuation/stochastic/status/${encodeURIComponent(jobId)}`, config)
 }
 
 /**
@@ -97,10 +103,11 @@ export async function getStochasticJobStatus(jobId) {
  * POST /api/v1/valuation/stochastic
  * 
  * @param {Object} payload - StochasticValuationRequest
+ * @param {Object} config - Optional Axios request config
  * @returns {Promise<Object>} StochasticValuationResponse
  */
-export async function runStochasticValuation(payload) {
-  return await httpClient.post('/valuation/stochastic', payload)
+export async function runStochasticValuation(payload, config = {}) {
+  return await httpClient.post('/valuation/stochastic', payload, config)
 }
 
 /**
@@ -108,10 +115,11 @@ export async function runStochasticValuation(payload) {
  * POST /api/v1/valuation/portfolio/csv
  * 
  * @param {FormData} formData - Multipart with 'file' and valuation parameters
+ * @param {Object} config - Optional Axios request config
  * @returns {Promise<Object>} PortfolioValuationResponse
  */
-export async function uploadPortfolioCSV(formData) {
-  return await httpClient.post('/valuation/portfolio/csv', formData)
+export async function uploadPortfolioCSV(formData, config = {}) {
+  return await httpClient.post('/valuation/portfolio/csv', formData, config)
 }
 
 /**
@@ -129,10 +137,11 @@ export function getSamplePortfolioCSVUrl(count = 1000) {
  * POST /api/v1/valuation/sensitivity/tornado
  * 
  * @param {Object} payload - SensitivityRequest
+ * @param {Object} config - Optional Axios request config
  * @returns {Promise<Object>} SensitivityResponse
  */
-export async function runSensitivityAnalysis(payload) {
-  return await httpClient.post('/valuation/sensitivity/tornado', payload)
+export async function runSensitivityAnalysis(payload, config = {}) {
+  return await httpClient.post('/valuation/sensitivity/tornado', payload, config)
 }
 
 /**
@@ -140,10 +149,11 @@ export async function runSensitivityAnalysis(payload) {
  * POST /api/v1/valuation/stress-test
  * 
  * @param {Object} payload - StressTestRequest
+ * @param {Object} config - Optional Axios request config
  * @returns {Promise<Object>} StressTestResponse
  */
-export async function runStressTest(payload) {
-  return await httpClient.post('/valuation/stress-test', payload)
+export async function runStressTest(payload, config = {}) {
+  return await httpClient.post('/valuation/stress-test', payload, config)
 }
 
 /**
@@ -151,8 +161,9 @@ export async function runStressTest(payload) {
  * POST /api/v1/contracts/simulate-graph
  * 
  * @param {Object} payload - ContractGraphPayload
+ * @param {Object} config - Optional Axios request config
  * @returns {Promise<Object>} SimulateGraphResponse
  */
-export async function simulateContractGraph(payload) {
-  return await httpClient.post('/contracts/simulate-graph', payload)
+export async function simulateContractGraph(payload, config = {}) {
+  return await httpClient.post('/contracts/simulate-graph', payload, config)
 }

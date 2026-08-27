@@ -11,12 +11,21 @@ const props = defineProps({
     type: Object,
     default: null,
   },
+  loading: {
+    type: Boolean,
+    default: false,
+  },
+  error: {
+    type: String,
+    default: null,
+  },
   isActive: {
     type: Boolean,
     default: true,
   },
 })
 
+const emit = defineEmits(['run-valuation'])
 const stressTestRef = ref(null)
 
 function formatCurrency(val) {
@@ -43,6 +52,27 @@ defineExpose({
 
 <template>
   <div class="space-y-6">
+    <!-- Error Alert Banner -->
+    <div
+      v-if="error"
+      class="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center justify-between shadow-lg"
+    >
+      <div class="flex items-center space-x-2.5">
+        <span class="h-2 w-2 rounded-full bg-rose-400"></span>
+        <div>
+          <strong class="font-semibold text-rose-200">Sensitivity Analysis Error:</strong>
+          <span class="ml-1 text-rose-300/90">{{ error }}</span>
+        </div>
+      </div>
+      <button
+        @click="emit('run-valuation')"
+        type="button"
+        class="btn-secondary text-[11px] px-3 py-1 rounded-md border-rose-500/30 text-rose-200 hover:bg-rose-500/20 transition"
+      >
+        Retry
+      </button>
+    </div>
+
     <!-- Interactive Real-Time Stress Testing Sliders & Trajectory -->
     <StressTestDashboard
       :contract-form="form"
@@ -73,7 +103,7 @@ defineExpose({
               <th>Expense</th>
               <th>Shocked Reserve</th>
               <th>Delta ($)</th>
-              <th>Solvency Risk</th>
+              <th>Solvency Impact</th>
             </tr>
           </thead>
           <tbody>

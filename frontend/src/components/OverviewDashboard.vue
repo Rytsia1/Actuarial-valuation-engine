@@ -20,6 +20,10 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  error: {
+    type: String,
+    default: null,
+  },
   isActive: {
     type: Boolean,
     default: true,
@@ -261,6 +265,27 @@ const miniDistOption = computed(() => {
 
 <template>
   <div class="space-y-5">
+    <!-- Error Notification Banner -->
+    <div
+      v-if="error"
+      class="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center justify-between shadow-lg"
+    >
+      <div class="flex items-center space-x-2.5">
+        <span class="h-2 w-2 rounded-full bg-rose-400"></span>
+        <div>
+          <strong class="font-semibold text-rose-200">Valuation Error:</strong>
+          <span class="ml-1 text-rose-300/90">{{ error }}</span>
+        </div>
+      </div>
+      <button
+        @click="emit('run-valuation')"
+        type="button"
+        class="btn-secondary text-[11px] px-3 py-1 rounded-md border-rose-500/30 text-rose-200 hover:bg-rose-500/20 transition"
+      >
+        Retry
+      </button>
+    </div>
+
     <!-- Hero Card Row -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
       <!-- Primary Hero: Big KPI + Chart -->
@@ -270,6 +295,7 @@ const miniDistOption = computed(() => {
             <div class="text-xs text-slate-500 font-medium uppercase tracking-wider">Total Portfolio BEL</div>
             <div class="text-3xl font-semibold text-white mt-1 font-mono tracking-tight">
               <span v-if="loading" class="skeleton inline-block w-40 h-8"></span>
+              <span v-else-if="error" class="text-rose-400 text-xl font-sans font-medium">Error</span>
               <span v-else>{{ formatCurrency(stochasticData?.mean_bel ?? deterministicData?.bel) }}</span>
             </div>
             <div class="text-xs text-slate-500 mt-1 font-mono" v-if="stochasticData?.std_bel">
@@ -282,7 +308,10 @@ const miniDistOption = computed(() => {
           </div>
         </div>
         <div class="w-full h-52 mt-2">
-          <BaseChart :option="heroChartOption" :loading="loading" />
+          <div v-if="!deterministicData && !loading" class="h-full flex items-center justify-center text-xs text-slate-500 card-inset rounded-lg">
+            No calculation data available. Run valuation engine to display chart.
+          </div>
+          <BaseChart v-else :option="heroChartOption" :loading="loading" />
         </div>
       </div>
 
@@ -292,6 +321,7 @@ const miniDistOption = computed(() => {
           <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Annual Net Premium</div>
           <div class="text-xl font-semibold text-white mt-1 font-mono">
             <span v-if="loading" class="skeleton inline-block w-28 h-6"></span>
+            <span v-else-if="error" class="text-slate-500 text-sm font-sans">—</span>
             <span v-else>{{ formatCurrency(deterministicData?.annual_net_premium) }}</span>
           </div>
           <div class="text-[11px] text-slate-500 mt-1">ä = {{ deterministicData?.annuity_factor?.toFixed(3) || '—' }}</div>
@@ -301,6 +331,7 @@ const miniDistOption = computed(() => {
           <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">95% Value at Risk</div>
           <div class="text-xl font-semibold text-rose-400 mt-1 font-mono">
             <span v-if="loading" class="skeleton inline-block w-28 h-6"></span>
+            <span v-else-if="error" class="text-slate-500 text-sm font-sans">—</span>
             <span v-else>{{ formatCurrency(stochasticData?.var_95) }}</span>
           </div>
           <div class="text-[11px] text-slate-500 mt-1">CVaR 95%: {{ formatCurrency(stochasticData?.cvar_95) }}</div>
@@ -310,6 +341,7 @@ const miniDistOption = computed(() => {
           <div class="text-[11px] text-slate-500 uppercase tracking-wider font-medium">Gross Premium</div>
           <div class="text-xl font-semibold text-emerald-400 mt-1 font-mono">
             <span v-if="loading" class="skeleton inline-block w-28 h-6"></span>
+            <span v-else-if="error" class="text-slate-500 text-sm font-sans">—</span>
             <span v-else>{{ formatCurrency(deterministicData?.annual_gross_premium) }}</span>
           </div>
           <div class="text-[11px] text-slate-500 mt-1">Acquisition &amp; Renewal Loaded</div>
@@ -329,7 +361,10 @@ const miniDistOption = computed(() => {
           <span class="badge badge-success">Verified</span>
         </div>
         <div class="w-full h-64">
-          <BaseChart :option="miniReserveOption" :loading="loading" />
+          <div v-if="!deterministicData && !loading" class="h-full flex items-center justify-center text-xs text-slate-500 card-inset rounded-lg">
+            No reserve calculation data.
+          </div>
+          <BaseChart v-else :option="miniReserveOption" :loading="loading" />
         </div>
       </div>
 

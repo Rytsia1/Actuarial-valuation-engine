@@ -12,11 +12,17 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  error: {
+    type: String,
+    default: null,
+  },
   isActive: {
     type: Boolean,
     default: true,
   },
 })
+
+const emit = defineEmits(['run-valuation'])
 
 const ACCENT = {
   blue: '#38BDF8',
@@ -84,8 +90,8 @@ const reserveChartOption = computed(() => {
         data: prospective,
         smooth: true,
         symbol: 'circle',
-        symbolSize: 4,
-        lineStyle: { width: 2.5, color: ACCENT.blue },
+        symbolSize: 3,
+        lineStyle: { width: 2, color: ACCENT.blue },
         itemStyle: { color: ACCENT.blue },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
@@ -117,8 +123,37 @@ const reserveChartOption = computed(() => {
 
 <template>
   <div class="space-y-5">
+    <!-- Error Alert Banner -->
+    <div
+      v-if="error"
+      class="p-4 rounded-xl bg-rose-500/10 border border-rose-500/20 text-rose-300 text-xs flex items-center justify-between shadow-lg"
+    >
+      <div class="flex items-center space-x-2.5">
+        <span class="h-2 w-2 rounded-full bg-rose-400"></span>
+        <div>
+          <strong class="font-semibold text-rose-200">Reserve Calculation Error:</strong>
+          <span class="ml-1 text-rose-300/90">{{ error }}</span>
+        </div>
+      </div>
+      <button
+        @click="emit('run-valuation')"
+        type="button"
+        class="btn-secondary text-[11px] px-3 py-1 rounded-md border-rose-500/30 text-rose-200 hover:bg-rose-500/20 transition"
+      >
+        Retry
+      </button>
+    </div>
+
+    <!-- Empty State -->
+    <div v-if="!deterministicData && !loading && !error" class="card p-8 text-center space-y-2.5">
+      <p class="text-slate-400 text-xs">No reserve calculations available.</p>
+      <button @click="emit('run-valuation')" type="button" class="btn-primary text-xs px-3.5 py-1.5 rounded-md">
+        Run Valuation Engine
+      </button>
+    </div>
+
     <!-- Reserve Chart Card -->
-    <div class="card p-5">
+    <div v-if="deterministicData || loading" class="card p-5">
       <div class="flex items-center justify-between mb-3">
         <div>
           <h3 class="text-sm font-semibold text-white">Policy Reserve Profiles</h3>
@@ -134,11 +169,11 @@ const reserveChartOption = computed(() => {
     </div>
 
     <!-- Duration by Duration Reserve Table -->
-    <div class="card p-5">
+    <div v-if="deterministicData && deterministicData.reserve_profile" class="card p-5">
       <div class="flex items-center justify-between mb-4">
         <div>
           <h3 class="text-sm font-semibold text-white">Seriatim Policy Duration Schedule</h3>
-          <p class="text-[11px] text-slate-500">{{ deterministicData?.reserve_profile?.length || 0 }} policy durations</p>
+          <p class="text-[11px] text-slate-500">{{ deterministicData.reserve_profile.length }} policy durations</p>
         </div>
       </div>
       <div class="overflow-x-auto card-inset rounded-lg max-h-[500px]">
@@ -154,7 +189,7 @@ const reserveChartOption = computed(() => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="row in deterministicData?.reserve_profile || []" :key="row.duration">
+            <tr v-for="row in deterministicData.reserve_profile" :key="row.duration">
               <td class="text-sky-400 font-semibold font-mono">t={{ row.duration }}</td>
               <td class="font-mono text-slate-300">{{ row.age }}</td>
               <td class="text-sky-400 font-mono font-semibold">{{ formatCurrency(row.reserve_prospective) }}</td>

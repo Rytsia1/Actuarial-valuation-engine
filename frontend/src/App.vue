@@ -26,17 +26,27 @@ import SensitivityDashboard from './components/SensitivityDashboard.vue'
 import PortfolioDashboard from './components/PortfolioDashboard.vue'
 import CashFlowTable from './components/CashFlowTable.vue'
 import ContractBuilderView from './views/ContractBuilderView.vue'
+import { createRequestState } from './utils/useAsyncState'
 
 // ────────────────────────────────────────────────────────────
-// Reactive Dashboard State
+// Reactive Dashboard State & Request State Machines
 // ────────────────────────────────────────────────────────────
 
 const activeTab = ref('overview')
 const backendStatus = ref('checking')
-const loading = ref(false)
-const errorMessage = ref(null)
 const backendDetails = ref(null)
 const sidebarOpen = ref(false)
+
+// Individual Request States (loading, error, data lifecycle)
+const detState = createRequestState()
+const stochState = createRequestState()
+const ifrs17State = createRequestState()
+const sensState = createRequestState()
+const portfolioState = createRequestState()
+
+// Global aggregated loading and error states for header indicators
+const loading = computed(() => detState.loading.value || stochState.loading.value || ifrs17State.loading.value || sensState.loading.value)
+const errorMessage = computed(() => detState.error.value || stochState.error.value || ifrs17State.error.value || sensState.error.value || null)
 
 // Mortality Table Registry State
 const availableTables = ref([])
@@ -58,16 +68,9 @@ const partialMetrics = ref(null)
 let activeSocketConnection = null
 
 // Portfolio Batch State
-const portfolioLoading = ref(false)
-const portfolioError = ref(null)
-const portfolioData = shallowRef(null)
 const portfolioInterestRate = ref(0.05)
 
-// IFRS 17 State
-const ifrs17Data = shallowRef(null)
-
-// Sensitivity & Stress State
-const sensitivityData = shallowRef(null)
+// Sensitivity & Stress Ref
 const sensitivityDashboardRef = ref(null)
 
 // Form Parameters with standard actuarial defaults
@@ -110,10 +113,6 @@ const form = reactive({
   seed: 42,
 })
 
-// Valuation Results from FastAPI (shallowRef prevents recursive reactivity overload)
-const deterministicData = shallowRef(null)
-const stochasticData = shallowRef(null)
-
 // Navigation definition
 const navItems = [
   { id: 'overview', label: 'Overview', icon: 'chart' },
@@ -139,6 +138,7 @@ function formatCurrency(val) {
 function switchTab(tabId) {
   activeTab.value = tabId
   sidebarOpen.value = false
+  checkAndLazyLoadTab(tabId)
   if (tabId === 'sensitivity') {
     nextTick(() => {
       sensitivityDashboardRef.value?.resizeCharts?.()
@@ -191,6 +191,228 @@ function applyPreset(type) {
 // API Communication & Valuation Orchestrator
 // ────────────────────────────────────────────────────────────
 
+// ────────────────────────────────────────────────────────────
+// API Communication & Progressive Valuation Orchestrator
+// ────────────────────────────────────────────────────────────
+
+function buildDeterministicPayload() {
+  return {
+    product_type: form.product_type,
+    issue_age: form.issue_age,
+    term: form.product_type === 'whole_life' ? null : form.term,
+    sum_assured: form.sum_assured,
+    premium_paying_term: form.premium_paying_term,
+    interest_rate: form.interest_rate,
+    gross_premium: form.gross_premium,
+    table_id: form.table_id,
+    expense: form.expense,
+    lapse: form.lapse,
+  }
+}
+
+function buildStochasticPayload() {
+  return {
+    product_type: form.product_type,
+    issue_age: form.issue_age,
+    term: form.product_type === 'whole_life' ? null : form.term,
+    sum_assured: form.sum_assured,
+    premium_paying_term: form.premium_paying_term,
+    gross_premium: form.gross_premium,
+    table_id: form.table_id,
+    vasicek: form.vasicek,
+    dynamic_lapse: form.enable_dynamic_lapse ? form.dynamic_lapse : null,
+    expense: form.expense,
+    n_scenarios: form.n_scenarios,
+    seed: form.seed,
+  }
+}
+
+async function runStochasticAsyncWithSocket(requestId, signal) {
+  if (activeSocketConnection) {
+    try { activeSocketConnection.close() } catch (_) {}
+    activeSocketConnection = null
+  }
+
+  isSimulating.value = true
+  simProgress.value = 0
+  completedPaths.value = 0
+  totalPaths.value = form.n_scenarios
+  partialMetrics.value = null
+
+  const stochPayload = buildStochasticPayload()
+
+  return new Promise(async (resolve, reject) => {
+    // If signal already aborted before dispatch
+    if (signal?.aborted) {
+      isSimulating.value = false
+      return reject(new Error('Simulation aborted'))
+    }
+
+    try {
+      const jobRes = await startAsyncStochasticValuation(stochPayload, { signal })
+      if (!stochState.isLatest(requestId)) {
+        isSimulating.value = false
+        return
+      }
+
+      const jobId = jobRes.job_id
+
+      activeSocketConnection = connectSimulationSocket(jobId, {
+        onProgress: (prog) => {
+          if (!stochState.isLatest(requestId)) return
+          simProgress.value = prog.percent
+          completedPaths.value = prog.completed_paths
+          totalPaths.value = prog.total_paths
+          if (prog.partial_metrics) {
+            partialMetrics.value = prog.partial_metrics
+          }
+        },
+        onComplete: (data) => {
+          if (!stochState.isLatest(requestId)) return
+          simProgress.value = 100
+          completedPaths.value = totalPaths.value
+          isSimulating.value = false
+          resolve(data)
+        },
+        onError: async (err) => {
+          if (!stochState.isLatest(requestId)) return
+          console.warn('WebSocket error, falling back to HTTP polling:', err)
+          try {
+            let attempts = 0
+            while (attempts < 60) {
+              if (!stochState.isLatest(requestId) || signal?.aborted) return
+              await new Promise(r => setTimeout(r, 250))
+              const statusRes = await getStochasticJobStatus(jobId, { signal })
+              if (!stochState.isLatest(requestId)) return
+              simProgress.value = statusRes.progress
+              completedPaths.value = statusRes.completed_paths
+              if (statusRes.status === 'COMPLETED' && statusRes.result) {
+                isSimulating.value = false
+                resolve(statusRes.result)
+                return
+              } else if (statusRes.status === 'FAILED') {
+                throw new Error(statusRes.error || 'Async simulation failed')
+              }
+              attempts++
+            }
+            throw new Error('Simulation polling timed out')
+          } catch (pollErr) {
+            reject(pollErr)
+          }
+        },
+      })
+    } catch (err) {
+      if (!stochState.isLatest(requestId) || signal?.aborted) {
+        isSimulating.value = false
+        return
+      }
+      try {
+        const syncRes = await runStochasticValuation(stochPayload, { signal })
+        if (!stochState.isLatest(requestId)) return
+        simProgress.value = 100
+        completedPaths.value = form.n_scenarios
+        isSimulating.value = false
+        resolve(syncRes)
+      } catch (syncErr) {
+        reject(syncErr)
+      }
+    }
+  })
+}
+
+// 1. Fast, instant baseline valuation (<10ms)
+async function executeBaselineValuation() {
+  const { requestId, signal } = detState.start()
+
+  try {
+    const detPayload = buildDeterministicPayload()
+    const detRes = await runDeterministicValuation(detPayload, { signal })
+    detState.success(detRes, requestId)
+    backendStatus.value = 'healthy'
+  } catch (err) {
+    console.error('Baseline valuation error:', err)
+    detState.failure(err, requestId)
+    backendStatus.value = 'error'
+  }
+}
+
+// 2. Full progressive valuation execution with race-condition guard
+async function executeValuation() {
+  const detReq = detState.start()
+  const ifrs17Req = ifrs17State.start()
+  const sensReq = sensState.start()
+  const stochReq = stochState.start()
+
+  // 1. Immediate deterministic calculation
+  try {
+    const detPayload = buildDeterministicPayload()
+    const detRes = await runDeterministicValuation(detPayload, { signal: detReq.signal })
+    detState.success(detRes, detReq.requestId)
+    backendStatus.value = 'healthy'
+  } catch (err) {
+    console.error('Deterministic valuation error:', err)
+    detState.failure(err, detReq.requestId)
+    ifrs17State.failure(err, ifrs17Req.requestId)
+    sensState.failure(err, sensReq.requestId)
+    stochState.failure(err, stochReq.requestId)
+    backendStatus.value = 'error'
+    return
+  }
+
+  // 2. Secondary valuations asynchronously in background
+  const detPayload = buildDeterministicPayload()
+  const ifrs17Payload = { ...detPayload, ra_ratio: form.ra_ratio }
+  const sensPayload = { ...detPayload }
+
+  const ifrs17Task = runIFRS17Valuation(ifrs17Payload, { signal: ifrs17Req.signal })
+    .then(res => ifrs17State.success(res, ifrs17Req.requestId))
+    .catch(err => {
+      console.warn('IFRS17 valuation error:', err)
+      ifrs17State.failure(err, ifrs17Req.requestId)
+    })
+
+  const sensTask = runSensitivityAnalysis(sensPayload, { signal: sensReq.signal })
+    .then(res => sensState.success(res, sensReq.requestId))
+    .catch(err => {
+      console.warn('Sensitivity analysis error:', err)
+      sensState.failure(err, sensReq.requestId)
+    })
+
+  const stochTask = runStochasticAsyncWithSocket(stochReq.requestId, stochReq.signal)
+    .then(res => stochState.success(res, stochReq.requestId))
+    .catch(err => {
+      console.warn('Stochastic valuation error:', err)
+      stochState.failure(err, stochReq.requestId)
+    })
+
+  await Promise.allSettled([ifrs17Task, sensTask, stochTask])
+}
+
+// On-demand lazy loader for tabs
+async function checkAndLazyLoadTab(tabId) {
+  if (tabId === 'ifrs17' && !ifrs17State.data.value && !ifrs17State.loading.value) {
+    const { requestId, signal } = ifrs17State.start()
+    try {
+      const ifrs17Payload = { ...buildDeterministicPayload(), ra_ratio: form.ra_ratio }
+      const res = await runIFRS17Valuation(ifrs17Payload, { signal })
+      ifrs17State.success(res, requestId)
+    } catch (err) {
+      console.warn('Lazy IFRS 17 loading failed:', err)
+      ifrs17State.failure(err, requestId)
+    }
+  }
+  if (tabId === 'stochastic' && !stochState.data.value && !stochState.loading.value && !isSimulating.value) {
+    const { requestId, signal } = stochState.start()
+    try {
+      const res = await runStochasticAsyncWithSocket(requestId, signal)
+      stochState.success(res, requestId)
+    } catch (err) {
+      console.warn('Lazy Stochastic loading failed:', err)
+      stochState.failure(err, requestId)
+    }
+  }
+}
+
 async function loadTableCatalogue() {
   try {
     const tables = await fetchTables()
@@ -214,146 +436,6 @@ async function checkBackendConnection() {
     console.warn('Backend health check error:', err)
     backendStatus.value = 'error'
     return false
-  }
-}
-
-async function executeValuation() {
-  loading.value = true
-  errorMessage.value = null
-
-  if (activeSocketConnection) {
-    activeSocketConnection.close()
-    activeSocketConnection = null
-  }
-
-  isSimulating.value = true
-  simProgress.value = 0
-  completedPaths.value = 0
-  totalPaths.value = form.n_scenarios
-  partialMetrics.value = null
-
-  try {
-    const detPayload = {
-      product_type: form.product_type,
-      issue_age: form.issue_age,
-      term: form.product_type === 'whole_life' ? null : form.term,
-      sum_assured: form.sum_assured,
-      premium_paying_term: form.premium_paying_term,
-      interest_rate: form.interest_rate,
-      gross_premium: form.gross_premium,
-      table_id: form.table_id,
-      expense: form.expense,
-      lapse: form.lapse,
-    }
-
-    const stochPayload = {
-      product_type: form.product_type,
-      issue_age: form.issue_age,
-      term: form.product_type === 'whole_life' ? null : form.term,
-      sum_assured: form.sum_assured,
-      premium_paying_term: form.premium_paying_term,
-      gross_premium: form.gross_premium,
-      table_id: form.table_id,
-      vasicek: form.vasicek,
-      dynamic_lapse: form.enable_dynamic_lapse ? form.dynamic_lapse : null,
-      expense: form.expense,
-      n_scenarios: form.n_scenarios,
-      seed: form.seed,
-    }
-
-    const ifrs17Payload = {
-      ...detPayload,
-      ra_ratio: form.ra_ratio,
-    }
-
-    const sensPayload = {
-      ...detPayload,
-    }
-
-    const detPromise = runDeterministicValuation(detPayload)
-    const ifrs17Promise = runIFRS17Valuation(ifrs17Payload)
-    const sensPromise = runSensitivityAnalysis(sensPayload)
-
-    const asyncJobPromise = new Promise(async (resolve, reject) => {
-      try {
-        const jobRes = await startAsyncStochasticValuation(stochPayload)
-        const jobId = jobRes.job_id
-
-        activeSocketConnection = connectSimulationSocket(jobId, {
-          onProgress: (prog) => {
-            simProgress.value = prog.percent
-            completedPaths.value = prog.completed_paths
-            totalPaths.value = prog.total_paths
-            if (prog.partial_metrics) {
-              partialMetrics.value = prog.partial_metrics
-            }
-          },
-          onComplete: (data) => {
-            simProgress.value = 100
-            completedPaths.value = totalPaths.value
-            isSimulating.value = false
-            resolve(data)
-          },
-          onError: async (err) => {
-            console.warn('WebSocket error, falling back to HTTP polling:', err)
-            try {
-              let attempts = 0
-              while (attempts < 60) {
-                await new Promise(r => setTimeout(r, 250))
-                const statusRes = await getStochasticJobStatus(jobId)
-                simProgress.value = statusRes.progress
-                completedPaths.value = statusRes.completed_paths
-                if (statusRes.status === 'COMPLETED' && statusRes.result) {
-                  isSimulating.value = false
-                  resolve(statusRes.result)
-                  return
-                } else if (statusRes.status === 'FAILED') {
-                  throw new Error(statusRes.error || 'Async simulation failed')
-                }
-                attempts++
-              }
-              throw new Error('Simulation polling timed out')
-            } catch (pollErr) {
-              reject(pollErr)
-            }
-          },
-        })
-      } catch (err) {
-        try {
-          const syncRes = await runStochasticValuation(stochPayload)
-          simProgress.value = 100
-          completedPaths.value = form.n_scenarios
-          isSimulating.value = false
-          resolve(syncRes)
-        } catch (syncErr) {
-          reject(syncErr)
-        }
-      }
-    })
-
-    const [detRes, stochRes, ifrs17Res, sensRes] = await Promise.all([
-      detPromise,
-      asyncJobPromise,
-      ifrs17Promise,
-      sensPromise,
-    ])
-
-    deterministicData.value = detRes
-    stochasticData.value = stochRes
-    ifrs17Data.value = ifrs17Res
-    sensitivityData.value = sensRes
-    backendStatus.value = 'healthy'
-  } catch (err) {
-    console.error('Valuation execution error:', err)
-    backendStatus.value = 'error'
-    if (err instanceof ActuaryApiError) {
-      errorMessage.value = err.message
-    } else {
-      errorMessage.value = err.message || 'Failed to complete actuarial valuation.'
-    }
-  } finally {
-    loading.value = false
-    isSimulating.value = false
   }
 }
 
@@ -413,8 +495,7 @@ async function handlePortfolioFileUpload(file) {
 }
 
 async function processPortfolioFile(file) {
-  portfolioLoading.value = true
-  portfolioError.value = null
+  portfolioState.start()
 
   try {
     const formData = new FormData()
@@ -423,19 +504,16 @@ async function processPortfolioFile(file) {
     formData.append('table_id', form.table_id)
 
     const res = await uploadPortfolioCSV(formData)
-    portfolioData.value = res
+    portfolioState.success(res)
     activeTab.value = 'portfolio'
   } catch (err) {
     console.error('Portfolio valuation error:', err)
-    portfolioError.value = err.message || 'Portfolio CSV valuation failed.'
-  } finally {
-    portfolioLoading.value = false
+    portfolioState.failure(err)
   }
 }
 
 async function runSamplePortfolioDemo(nPolicies = 1000) {
-  portfolioLoading.value = true
-  portfolioError.value = null
+  portfolioState.start()
 
   try {
     const url = getSamplePortfolioCSVUrl(nPolicies)
@@ -445,8 +523,7 @@ async function runSamplePortfolioDemo(nPolicies = 1000) {
     await processPortfolioFile(file)
   } catch (err) {
     console.error('Demo portfolio error:', err)
-    portfolioError.value = err.message || 'Failed to run demo portfolio.'
-    portfolioLoading.value = false
+    portfolioState.failure(err)
   }
 }
 
@@ -455,8 +532,12 @@ async function runSamplePortfolioDemo(nPolicies = 1000) {
 // ────────────────────────────────────────────────────────────
 
 onMounted(async () => {
-  await checkBackendConnection()
-  await executeValuation()
+  const isConnected = await checkBackendConnection()
+  if (isConnected) {
+    // Only execute the ultra-fast deterministic baseline on initial app launch (<10ms)
+    // Stochastic (5,000+ paths) & full suite will run smoothly when the user clicks 'Run Valuation' or switches to that tab
+    await executeBaselineValuation()
+  }
 })
 
 onUnmounted(() => {
@@ -667,10 +748,11 @@ onUnmounted(() => {
             <!-- 1. Overview Dashboard -->
             <div v-show="activeTab === 'overview'">
               <OverviewDashboard
-                :deterministic-data="deterministicData"
-                :stochastic-data="stochasticData"
+                :deterministic-data="detState.data.value"
+                :stochastic-data="stochState.data.value"
                 :form="form"
-                :loading="loading"
+                :loading="detState.loading.value || stochState.loading.value"
+                :error="detState.error.value || stochState.error.value"
                 :is-active="activeTab === 'overview'"
                 @run-valuation="executeValuation"
               />
@@ -679,18 +761,21 @@ onUnmounted(() => {
             <!-- 2. Reserve Dashboard -->
             <div v-show="activeTab === 'reserves'">
               <ReserveDashboard
-                :deterministic-data="deterministicData"
-                :loading="loading"
+                :deterministic-data="detState.data.value"
+                :loading="detState.loading.value"
+                :error="detState.error.value"
                 :is-active="activeTab === 'reserves'"
+                @run-valuation="executeValuation"
               />
             </div>
 
             <!-- 3. Stochastic & ESG Dashboard -->
             <div v-show="activeTab === 'stochastic'">
               <StochasticDashboard
-                :stochastic-data="stochasticData"
+                :stochastic-data="stochState.data.value"
                 :form="form"
-                :loading="loading"
+                :loading="stochState.loading.value"
+                :error="stochState.error.value"
                 :is-active="activeTab === 'stochastic'"
                 @run-valuation="executeValuation"
               />
@@ -698,7 +783,7 @@ onUnmounted(() => {
 
             <!-- 4. Cash Flows Tab -->
             <div v-show="activeTab === 'cashflows'">
-              <CashFlowTable :cash-flows="deterministicData?.cash_flows || []" />
+              <CashFlowTable :cash-flows="detState.data.value?.cash_flows || []" />
             </div>
 
             <!-- 5. Cohort Data Tab -->
@@ -706,7 +791,7 @@ onUnmounted(() => {
               <div class="flex items-center justify-between mb-4">
                 <div>
                   <h3 class="text-sm font-semibold text-white">Multi-Decrement Cohort Table</h3>
-                  <p class="text-[11px] text-slate-500">{{ deterministicData?.cash_flows?.length || 0 }} projection periods</p>
+                  <p class="text-[11px] text-slate-500">{{ detState.data.value?.cash_flows?.length || 0 }} projection periods</p>
                 </div>
               </div>
               <div class="overflow-x-auto card-inset rounded-lg max-h-[500px]">
@@ -724,7 +809,7 @@ onUnmounted(() => {
                     </tr>
                   </thead>
                   <tbody>
-                    <tr v-for="row in deterministicData?.cash_flows || []" :key="row.year">
+                    <tr v-for="row in detState.data.value?.cash_flows || []" :key="row.year">
                       <td class="text-sky-400 font-semibold font-mono">t={{ row.year }}</td>
                       <td class="font-mono">{{ row.age }}</td>
                       <td class="text-slate-500 font-mono">{{ (row.inforce_boy * 100).toFixed(2) }}%</td>
@@ -752,9 +837,12 @@ onUnmounted(() => {
       <section v-show="activeTab === 'sensitivity'" class="px-6 py-4">
         <SensitivityDashboard
           :form="form"
-          :sensitivity-data="sensitivityData"
+          :sensitivity-data="sensState.data.value"
+          :loading="sensState.loading.value"
+          :error="sensState.error.value"
           :is-active="activeTab === 'sensitivity'"
           ref="sensitivityDashboardRef"
+          @run-valuation="executeValuation"
         />
       </section>
 
@@ -763,9 +851,11 @@ onUnmounted(() => {
       <!-- ═══════════════════════════════════════════════════════ -->
       <section v-show="activeTab === 'ifrs17'" class="px-6 py-4">
         <IFRS17Dashboard
-          :ifrs17-data="ifrs17Data"
-          :loading="loading"
+          :ifrs17-data="ifrs17State.data.value"
+          :loading="ifrs17State.loading.value"
+          :error="ifrs17State.error.value"
           :is-active="activeTab === 'ifrs17'"
+          @run-valuation="executeValuation"
         />
       </section>
 
@@ -774,9 +864,9 @@ onUnmounted(() => {
       <!-- ═══════════════════════════════════════════════════════ -->
       <section v-show="activeTab === 'portfolio'" class="px-6 py-4">
         <PortfolioDashboard
-          :portfolio-data="portfolioData"
-          :portfolio-loading="portfolioLoading"
-          :portfolio-error="portfolioError"
+          :portfolio-data="portfolioState.data.value"
+          :portfolio-loading="portfolioState.loading.value"
+          :portfolio-error="portfolioState.error.value"
           :portfolio-interest-rate="portfolioInterestRate"
           :form="form"
           :is-active="activeTab === 'portfolio'"
