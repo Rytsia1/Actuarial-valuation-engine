@@ -25,6 +25,10 @@ const props = defineProps({
       gross_premium: null,
     }),
   },
+  isActive: {
+    type: Boolean,
+    default: false,
+  },
 })
 
 // ────────────────────────────────────────────────────────────
@@ -41,6 +45,7 @@ const shocks = reactive({
 const loading = ref(false)
 const error = ref(null)
 const stressData = shallowRef(null)
+let needsUpdate = false
 
 const tornadoChartRef = ref(null)
 const trajectoryChartRef = ref(null)
@@ -179,7 +184,7 @@ function triggerValuation(immediate = false) {
   }
 }
 
-// Watch sliders for real-time changes with ultra-safe prop access
+// Watch sliders and contractForm
 watch(
   () => [
     shocks.interest_rate_bps,
@@ -194,9 +199,30 @@ watch(
     props.contractForm?.table_id,
   ],
   () => {
-    triggerValuation(false)
+    if (props.isActive) {
+      triggerValuation(false)
+    } else {
+      needsUpdate = true
+    }
   },
   { deep: true }
+)
+
+// Watch isActive prop for on-demand fetch and resize
+watch(
+  () => props.isActive,
+  async (active) => {
+    if (active) {
+      if (!stressData.value || needsUpdate) {
+        needsUpdate = false
+        await fetchStressTest()
+      } else {
+        await nextTick()
+        resizeCharts()
+      }
+    }
+  },
+  { immediate: true }
 )
 
 // ────────────────────────────────────────────────────────────
@@ -214,9 +240,23 @@ const chartAxisLabel = { color: '#64748B', fontSize: 10, fontFamily: "'JetBrains
 const chartSplitLine = { lineStyle: { color: 'rgba(255, 255, 255, 0.04)' } }
 const chartAxisLine = { lineStyle: { color: '#1E293B' } }
 
+function getOrCreateChart(domRef) {
+  if (!domRef) return null
+  if (domRef.clientWidth === 0 || domRef.clientHeight === 0) return null
+  let chart = echarts.getInstanceByDom(domRef)
+  if (!chart) {
+    chart = markRaw(echarts.init(domRef))
+    if (resizeObserver) {
+      resizeObserver.observe(domRef)
+    }
+  }
+  return chart
+}
+
 function renderTornadoChart() {
   if (!tornadoChartRef.value || !Array.isArray(stressData.value?.tornado_data) || stressData.value.tornado_data.length === 0) return
-  if (!tornadoChart) tornadoChart = markRaw(echarts.init(tornadoChartRef.value))
+  tornadoChart = getOrCreateChart(tornadoChartRef.value)
+  if (!tornadoChart) return
 
   const items = [...stressData.value.tornado_data].reverse()
   const factors = items.map(d => d?.risk_factor ?? 'Factor')
@@ -293,11 +333,13 @@ function renderTornadoChart() {
     ],
   }
   tornadoChart.setOption(option, false)
+  tornadoChart.resize()
 }
 
 function renderTrajectoryChart() {
   if (!trajectoryChartRef.value || !Array.isArray(stressData.value?.reserve_trajectory) || stressData.value.reserve_trajectory.length === 0) return
-  if (!trajectoryChart) trajectoryChart = markRaw(echarts.init(trajectoryChartRef.value))
+  trajectoryChart = getOrCreateChart(trajectoryChartRef.value)
+  if (!trajectoryChart) return
 
   const traj = stressData.value.reserve_trajectory
   const durations = traj.map(d => `t=${d?.duration ?? 0}`)
@@ -377,11 +419,30 @@ function renderTrajectoryChart() {
     ],
   }
   trajectoryChart.setOption(option, false)
+  trajectoryChart.resize()
 }
 
 function renderAllCharts() {
   renderTornadoChart()
   renderTrajectoryChart()
+  if (resizeObserver) {
+    if (tornadoChartRef.value) resizeObserver.observe(tornadoChartRef.value)
+    if (trajectoryChartRef.value) resizeObserver.observe(trajectoryChartRef.value)
+  }
+}
+
+function resizeCharts() {
+  if (tornadoChart) {
+    tornadoChart.resize()
+  } else {
+    renderTornadoChart()
+  }
+
+  if (trajectoryChart) {
+    trajectoryChart.resize()
+  } else {
+    renderTrajectoryChart()
+  }
 }
 
 // ────────────────────────────────────────────────────────────
@@ -389,23 +450,20 @@ function renderAllCharts() {
 // ────────────────────────────────────────────────────────────
 
 onMounted(() => {
-  try {
-    fetchStressTest()
-  } catch (err) {
-    console.error('Error initializing stress test on mount:', err)
-  }
-
   resizeObserver = new ResizeObserver(() => {
-    try {
-      tornadoChart?.resize()
-      trajectoryChart?.resize()
-    } catch (err) {
-      console.warn('Error during chart resize:', err)
+    if (props.isActive) {
+      try {
+        tornadoChart?.resize()
+        trajectoryChart?.resize()
+      } catch (err) {
+        console.warn('Error during chart resize:', err)
+      }
     }
   })
 
-  if (tornadoChartRef.value) resizeObserver.observe(tornadoChartRef.value)
-  if (trajectoryChartRef.value) resizeObserver.observe(trajectoryChartRef.value)
+  if (props.isActive && !stressData.value) {
+    fetchStressTest()
+  }
 })
 
 onUnmounted(() => {
@@ -415,6 +473,11 @@ onUnmounted(() => {
   trajectoryChart?.dispose()
   tornadoChart = null
   trajectoryChart = null
+})
+
+defineExpose({
+  resizeCharts,
+  fetchStressTest,
 })
 </script>
 

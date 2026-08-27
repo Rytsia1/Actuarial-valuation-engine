@@ -120,6 +120,7 @@ const portfolioAgeChartRef = ref(null)
 const ifrs17LrcChartRef = ref(null)
 const ifrs17PnlChartRef = ref(null)
 const tornadoChartRef = ref(null)
+const stressTestDashboardRef = ref(null)
 
 let heroChart = null
 let reserveChart = null
@@ -168,10 +169,56 @@ function formatNumber(val, decimals = 2) {
   })
 }
 
+function formatPercent(val, decimals = 1) {
+  if (val === undefined || val === null || isNaN(val)) return '—'
+  const sign = val > 0 ? '+' : ''
+  return `${sign}${Number(val).toFixed(decimals)}%`
+}
+
+function renderTabCharts(tabId) {
+  switch (tabId) {
+    case 'overview':
+      renderHeroChart()
+      renderReserveChart()
+      renderFanChart()
+      renderDistChart()
+      break
+    case 'reserves':
+      renderHeroChart()
+      renderReserveChart()
+      break
+    case 'stochastic':
+      renderHeroChart()
+      renderFanChart()
+      renderDistChart()
+      break
+    case 'cashflows':
+      renderHeroChart()
+      renderCashFlowChart()
+      break
+    case 'table':
+      renderHeroChart()
+      break
+    case 'ifrs17':
+      renderIFRS17Charts()
+      break
+    case 'portfolio':
+      renderPortfolioCharts()
+      break
+    case 'sensitivity':
+      stressTestDashboardRef.value?.resizeCharts?.()
+      break
+    case 'builder':
+      break
+  }
+}
+
 function switchTab(tabId) {
   activeTab.value = tabId
   sidebarOpen.value = false
-  nextTick(() => renderAllCharts())
+  nextTick(() => {
+    renderTabCharts(tabId)
+  })
 }
 
 // ────────────────────────────────────────────────────────────
@@ -373,7 +420,7 @@ async function executeValuation() {
     backendStatus.value = 'healthy'
 
     await nextTick()
-    renderAllCharts()
+    renderTabCharts(activeTab.value)
   } catch (err) {
     console.error('Valuation execution error:', err)
     backendStatus.value = 'error'
@@ -466,7 +513,7 @@ async function processPortfolioFile(file) {
     activeTab.value = 'portfolio'
 
     await nextTick()
-    renderPortfolioCharts()
+    renderTabCharts('portfolio')
   } catch (err) {
     console.error('Portfolio valuation error:', err)
     portfolioError.value = err.message || 'Portfolio CSV valuation failed.'
@@ -528,9 +575,23 @@ const ACCENT = {
 // ECharts Render Functions (Mercury Institutional Theme)
 // ────────────────────────────────────────────────────────────
 
+function getOrCreateChart(domRef) {
+  if (!domRef) return null
+  if (domRef.clientWidth === 0 || domRef.clientHeight === 0) return null
+  let chart = echarts.getInstanceByDom(domRef)
+  if (!chart) {
+    chart = markRaw(echarts.init(domRef))
+    if (resizeObserver) {
+      resizeObserver.observe(domRef)
+    }
+  }
+  return chart
+}
+
 function renderHeroChart() {
   if (!heroChartRef.value || !deterministicData.value?.cash_flows) return
-  if (!heroChart) heroChart = markRaw(echarts.init(heroChartRef.value))
+  heroChart = getOrCreateChart(heroChartRef.value)
+  if (!heroChart) return
 
   const cfs = deterministicData.value.cash_flows
   const years = cfs.map(d => `Yr ${d.year + 1}`)
@@ -565,11 +626,13 @@ function renderHeroChart() {
     ],
   }
   heroChart.setOption(option, true)
+  heroChart.resize()
 }
 
 function renderReserveChart() {
   if (!reserveChartRef.value || !deterministicData.value?.reserve_profile) return
-  if (!reserveChart) reserveChart = markRaw(echarts.init(reserveChartRef.value))
+  reserveChart = getOrCreateChart(reserveChartRef.value)
+  if (!reserveChart) return
 
   const profile = deterministicData.value.reserve_profile
   const durations = profile.map(r => `t=${r.duration}`)
@@ -597,11 +660,13 @@ function renderReserveChart() {
     ],
   }
   reserveChart.setOption(option, true)
+  reserveChart.resize()
 }
 
 function renderFanChart() {
   if (!fanChartRef.value || (!stochasticData.value?.quantiles && !stochasticData.value?.fan_chart_rates)) return
-  if (!fanChart) fanChart = markRaw(echarts.init(fanChartRef.value))
+  fanChart = getOrCreateChart(fanChartRef.value)
+  if (!fanChart) return
 
   let years = [], p5 = [], p25 = [], p50 = [], p75 = [], p95 = []
 
@@ -646,11 +711,13 @@ function renderFanChart() {
     ],
   }
   fanChart.setOption(option, true)
+  fanChart.resize()
 }
 
 function renderCashFlowChart() {
   if (!cashFlowChartRef.value || !deterministicData.value?.cash_flows) return
-  if (!cashFlowChart) cashFlowChart = markRaw(echarts.init(cashFlowChartRef.value))
+  cashFlowChart = getOrCreateChart(cashFlowChartRef.value)
+  if (!cashFlowChart) return
 
   const cfs = deterministicData.value.cash_flows
   const years = cfs.map(d => `Yr ${d.year + 1}`)
@@ -672,11 +739,13 @@ function renderCashFlowChart() {
     ],
   }
   cashFlowChart.setOption(option, true)
+  cashFlowChart.resize()
 }
 
 function renderDistChart() {
   if (!distChartRef.value || (!stochasticData.value?.terminal_distribution && !stochasticData.value?.liability_histogram)) return
-  if (!distChart) distChart = markRaw(echarts.init(distChartRef.value))
+  distChart = getOrCreateChart(distChartRef.value)
+  if (!distChart) return
 
   let bins = [], counts = []
   const var95 = stochasticData.value.var_95 || stochasticData.value.terminal_distribution?.var_95 || 0
@@ -704,74 +773,84 @@ function renderDistChart() {
     series: [{ name: 'Scenarios', type: 'bar', data: counts, barWidth: '85%' }],
   }
   distChart.setOption(option, true)
+  distChart.resize()
 }
 
 function renderPortfolioCharts() {
   if (!portfolioData.value) return
 
   if (portfolioCfChartRef.value && portfolioData.value.annual_cash_flows) {
-    if (!portfolioCfChart) portfolioCfChart = markRaw(echarts.init(portfolioCfChartRef.value))
-    const cfs = portfolioData.value.annual_cash_flows
-    const years = cfs.map(d => `Yr ${d.year}`)
-    const premiums = cfs.map(d => d.premium_income)
-    const claims = cfs.map(d => d.death_claims + d.maturity_benefits)
-    const expenses = cfs.map(d => d.total_expenses)
-    const netLiability = cfs.map(d => d.net_liability_cf)
+    portfolioCfChart = getOrCreateChart(portfolioCfChartRef.value)
+    if (portfolioCfChart) {
+      const cfs = portfolioData.value.annual_cash_flows
+      const years = cfs.map(d => `Yr ${d.year}`)
+      const premiums = cfs.map(d => d.premium_income)
+      const claims = cfs.map(d => d.death_claims + d.maturity_benefits)
+      const expenses = cfs.map(d => d.total_expenses)
+      const netLiability = cfs.map(d => d.net_liability_cf)
 
-    portfolioCfChart.setOption({
-      backgroundColor: 'transparent',
-      tooltip: { ...chartTooltip, trigger: 'axis' },
-      legend: { data: ['Premiums', 'Claims', 'Expenses', 'Net Liability'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
-      grid: { top: 40, left: 70, right: 20, bottom: 30 },
-      xAxis: { type: 'category', data: years, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(years.length / 10)) } },
-      yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1_000_000).toFixed(1)}M` }, splitLine: chartSplitLine },
-      series: [
-        { name: 'Premiums', type: 'bar', stack: 'inflow', data: premiums, itemStyle: { color: ACCENT.emerald, borderRadius: [2, 2, 0, 0] } },
-        { name: 'Claims', type: 'bar', stack: 'outflow', data: claims, itemStyle: { color: ACCENT.rose, borderRadius: [2, 2, 0, 0] } },
-        { name: 'Expenses', type: 'bar', stack: 'outflow', data: expenses, itemStyle: { color: ACCENT.amber, borderRadius: [2, 2, 0, 0] } },
-        { name: 'Net Liability', type: 'line', data: netLiability, smooth: true, symbol: 'none', lineStyle: { width: 2, color: ACCENT.blue } },
-      ],
-    }, true)
+      portfolioCfChart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: { ...chartTooltip, trigger: 'axis' },
+        legend: { data: ['Premiums', 'Claims', 'Expenses', 'Net Liability'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
+        grid: { top: 40, left: 70, right: 20, bottom: 30 },
+        xAxis: { type: 'category', data: years, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(years.length / 10)) } },
+        yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1_000_000).toFixed(1)}M` }, splitLine: chartSplitLine },
+        series: [
+          { name: 'Premiums', type: 'bar', stack: 'inflow', data: premiums, itemStyle: { color: ACCENT.emerald, borderRadius: [2, 2, 0, 0] } },
+          { name: 'Claims', type: 'bar', stack: 'outflow', data: claims, itemStyle: { color: ACCENT.rose, borderRadius: [2, 2, 0, 0] } },
+          { name: 'Expenses', type: 'bar', stack: 'outflow', data: expenses, itemStyle: { color: ACCENT.amber, borderRadius: [2, 2, 0, 0] } },
+          { name: 'Net Liability', type: 'line', data: netLiability, smooth: true, symbol: 'none', lineStyle: { width: 2, color: ACCENT.blue } },
+        ],
+      }, true)
+      portfolioCfChart.resize()
+    }
   }
 
   if (portfolioProdChartRef.value && portfolioData.value.product_breakdown) {
-    if (!portfolioProdChart) portfolioProdChart = markRaw(echarts.init(portfolioProdChartRef.value))
-    const prodEntries = Object.entries(portfolioData.value.product_breakdown).map(([k, v]) => ({
-      name: k.replace('_', ' ').toUpperCase(), value: v.sum_assured,
-    }))
-    portfolioProdChart.setOption({
-      backgroundColor: 'transparent',
-      tooltip: { ...chartTooltip, trigger: 'item' },
-      legend: { orient: 'vertical', left: 'left', top: 'middle', textStyle: { color: ACCENT.slate, fontSize: 11 } },
-      series: [{
-        name: 'Face Amount', type: 'pie', radius: ['45%', '75%'], center: ['65%', '50%'],
-        avoidLabelOverlap: false, itemStyle: { borderRadius: 4, borderColor: '#0F172A', borderWidth: 2 },
-        label: { show: false }, data: prodEntries, color: [ACCENT.blue, ACCENT.indigo, ACCENT.emerald, ACCENT.amber],
-      }],
-    }, true)
+    portfolioProdChart = getOrCreateChart(portfolioProdChartRef.value)
+    if (portfolioProdChart) {
+      const prodEntries = Object.entries(portfolioData.value.product_breakdown).map(([k, v]) => ({
+        name: k.replace('_', ' ').toUpperCase(), value: v.sum_assured,
+      }))
+      portfolioProdChart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: { ...chartTooltip, trigger: 'item' },
+        legend: { orient: 'vertical', left: 'left', top: 'middle', textStyle: { color: ACCENT.slate, fontSize: 11 } },
+        series: [{
+          name: 'Face Amount', type: 'pie', radius: ['45%', '75%'], center: ['65%', '50%'],
+          avoidLabelOverlap: false, itemStyle: { borderRadius: 4, borderColor: '#0F172A', borderWidth: 2 },
+          label: { show: false }, data: prodEntries, color: [ACCENT.blue, ACCENT.indigo, ACCENT.emerald, ACCENT.amber],
+        }],
+      }, true)
+      portfolioProdChart.resize()
+    }
   }
 
   if (portfolioAgeChartRef.value && portfolioData.value.age_breakdown) {
-    if (!portfolioAgeChart) portfolioAgeChart = markRaw(echarts.init(portfolioAgeChartRef.value))
-    const ageEntries = Object.entries(portfolioData.value.age_breakdown)
-    const categories = ageEntries.map(([k]) => k)
-    const counts = ageEntries.map(([, v]) => v.count)
-    const bels = ageEntries.map(([, v]) => v.bel)
-    portfolioAgeChart.setOption({
-      backgroundColor: 'transparent',
-      tooltip: { ...chartTooltip, trigger: 'axis' },
-      legend: { data: ['Count', 'BEL'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
-      grid: { top: 40, left: 60, right: 55, bottom: 30 },
-      xAxis: { type: 'category', data: categories, axisLine: chartAxisLine, axisLabel: chartAxisLabel },
-      yAxis: [
-        { type: 'value', name: 'Count', axisLabel: chartAxisLabel, splitLine: chartSplitLine },
-        { type: 'value', name: 'BEL', axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: { show: false } },
-      ],
-      series: [
-        { name: 'Count', type: 'bar', data: counts, itemStyle: { color: ACCENT.indigo, borderRadius: [3, 3, 0, 0] } },
-        { name: 'BEL', type: 'line', yAxisIndex: 1, data: bels, smooth: true, itemStyle: { color: ACCENT.rose } },
-      ],
-    }, true)
+    portfolioAgeChart = getOrCreateChart(portfolioAgeChartRef.value)
+    if (portfolioAgeChart) {
+      const ageEntries = Object.entries(portfolioData.value.age_breakdown)
+      const categories = ageEntries.map(([k]) => k)
+      const counts = ageEntries.map(([, v]) => v.count)
+      const bels = ageEntries.map(([, v]) => v.bel)
+      portfolioAgeChart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: { ...chartTooltip, trigger: 'axis' },
+        legend: { data: ['Count', 'BEL'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
+        grid: { top: 40, left: 60, right: 55, bottom: 30 },
+        xAxis: { type: 'category', data: categories, axisLine: chartAxisLine, axisLabel: chartAxisLabel },
+        yAxis: [
+          { type: 'value', name: 'Count', axisLabel: chartAxisLabel, splitLine: chartSplitLine },
+          { type: 'value', name: 'BEL', axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: { show: false } },
+        ],
+        series: [
+          { name: 'Count', type: 'bar', data: counts, itemStyle: { color: ACCENT.indigo, borderRadius: [3, 3, 0, 0] } },
+          { name: 'BEL', type: 'line', yAxisIndex: 1, data: bels, smooth: true, itemStyle: { color: ACCENT.rose } },
+        ],
+      }, true)
+      portfolioAgeChart.resize()
+    }
   }
 }
 
@@ -779,56 +858,63 @@ function renderIFRS17Charts() {
   if (!ifrs17Data.value) return
 
   if (ifrs17LrcChartRef.value && ifrs17Data.value.balance_sheet_schedule) {
-    if (!ifrs17LrcChart) ifrs17LrcChart = markRaw(echarts.init(ifrs17LrcChartRef.value))
-    const schedule = ifrs17Data.value.balance_sheet_schedule
-    const durations = schedule.map(d => `t=${d.duration}`)
-    const bels = schedule.map(d => d.bel)
-    const ras = schedule.map(d => d.risk_adjustment)
-    const csms = schedule.map(d => d.csm)
-    const lrcs = schedule.map(d => d.total_lrc)
+    ifrs17LrcChart = getOrCreateChart(ifrs17LrcChartRef.value)
+    if (ifrs17LrcChart) {
+      const schedule = ifrs17Data.value.balance_sheet_schedule
+      const durations = schedule.map(d => `t=${d.duration}`)
+      const bels = schedule.map(d => d.bel)
+      const ras = schedule.map(d => d.risk_adjustment)
+      const csms = schedule.map(d => d.csm)
+      const lrcs = schedule.map(d => d.total_lrc)
 
-    ifrs17LrcChart.setOption({
-      backgroundColor: 'transparent',
-      tooltip: { ...chartTooltip, trigger: 'axis' },
-      legend: { data: ['BEL', 'RA', 'CSM', 'Total LRC'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
-      grid: chartGrid,
-      xAxis: { type: 'category', data: durations, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(durations.length / 8)) } },
-      yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: chartSplitLine },
-      series: [
-        { name: 'BEL', type: 'line', stack: 'Total', data: bels, areaStyle: { color: 'rgba(56, 189, 248, 0.25)' }, lineStyle: { width: 1.5, color: ACCENT.blue }, itemStyle: { color: ACCENT.blue }, symbol: 'none' },
-        { name: 'RA', type: 'line', stack: 'Total', data: ras, areaStyle: { color: 'rgba(251, 191, 36, 0.3)' }, lineStyle: { width: 1.5, color: ACCENT.amber }, itemStyle: { color: ACCENT.amber }, symbol: 'none' },
-        { name: 'CSM', type: 'line', stack: 'Total', data: csms, areaStyle: { color: 'rgba(99, 102, 241, 0.3)' }, lineStyle: { width: 1.5, color: ACCENT.indigo }, itemStyle: { color: ACCENT.indigo }, symbol: 'none' },
-        { name: 'Total LRC', type: 'line', data: lrcs, smooth: true, lineStyle: { width: 2, color: ACCENT.white, type: 'dashed' }, itemStyle: { color: ACCENT.white }, symbol: 'none' },
-      ],
-    }, true)
+      ifrs17LrcChart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: { ...chartTooltip, trigger: 'axis' },
+        legend: { data: ['BEL', 'RA', 'CSM', 'Total LRC'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
+        grid: chartGrid,
+        xAxis: { type: 'category', data: durations, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(durations.length / 8)) } },
+        yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: chartSplitLine },
+        series: [
+          { name: 'BEL', type: 'line', stack: 'Total', data: bels, areaStyle: { color: 'rgba(56, 189, 248, 0.25)' }, lineStyle: { width: 1.5, color: ACCENT.blue }, itemStyle: { color: ACCENT.blue }, symbol: 'none' },
+          { name: 'RA', type: 'line', stack: 'Total', data: ras, areaStyle: { color: 'rgba(251, 191, 36, 0.3)' }, lineStyle: { width: 1.5, color: ACCENT.amber }, itemStyle: { color: ACCENT.amber }, symbol: 'none' },
+          { name: 'CSM', type: 'line', stack: 'Total', data: csms, areaStyle: { color: 'rgba(99, 102, 241, 0.3)' }, lineStyle: { width: 1.5, color: ACCENT.indigo }, itemStyle: { color: ACCENT.indigo }, symbol: 'none' },
+          { name: 'Total LRC', type: 'line', data: lrcs, smooth: true, lineStyle: { width: 2, color: ACCENT.white, type: 'dashed' }, itemStyle: { color: ACCENT.white }, symbol: 'none' },
+        ],
+      }, true)
+      ifrs17LrcChart.resize()
+    }
   }
 
   if (ifrs17PnlChartRef.value && ifrs17Data.value.income_statement_schedule) {
-    if (!ifrs17PnlChart) ifrs17PnlChart = markRaw(echarts.init(ifrs17PnlChartRef.value))
-    const pnl = ifrs17Data.value.income_statement_schedule
-    const years = pnl.map(d => `Yr ${d.year + 1}`)
+    ifrs17PnlChart = getOrCreateChart(ifrs17PnlChartRef.value)
+    if (ifrs17PnlChart) {
+      const pnl = ifrs17Data.value.income_statement_schedule
+      const years = pnl.map(d => `Yr ${d.year + 1}`)
 
-    ifrs17PnlChart.setOption({
-      backgroundColor: 'transparent',
-      tooltip: { ...chartTooltip, trigger: 'axis' },
-      legend: { data: ['Revenue', 'Claims', 'Expenses', 'CSM Release', 'Service Result'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
-      grid: chartGrid,
-      xAxis: { type: 'category', data: years, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(years.length / 8)) } },
-      yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: chartSplitLine },
-      series: [
-        { name: 'Revenue', type: 'bar', data: pnl.map(d => d.insurance_revenue), itemStyle: { color: ACCENT.emerald, borderRadius: [3, 3, 0, 0] } },
-        { name: 'Claims', type: 'bar', data: pnl.map(d => d.claims_incurred), itemStyle: { color: ACCENT.rose, borderRadius: [3, 3, 0, 0] } },
-        { name: 'Expenses', type: 'bar', data: pnl.map(d => d.expenses_incurred), itemStyle: { color: ACCENT.amber, borderRadius: [3, 3, 0, 0] } },
-        { name: 'CSM Release', type: 'line', data: pnl.map(d => d.csm_amortization), smooth: true, lineStyle: { width: 2, color: ACCENT.indigo }, itemStyle: { color: ACCENT.indigo } },
-        { name: 'Service Result', type: 'line', data: pnl.map(d => d.insurance_service_result), smooth: true, lineStyle: { width: 2, color: ACCENT.blue }, itemStyle: { color: ACCENT.blue } },
-      ],
-    }, true)
+      ifrs17PnlChart.setOption({
+        backgroundColor: 'transparent',
+        tooltip: { ...chartTooltip, trigger: 'axis' },
+        legend: { data: ['Revenue', 'Claims', 'Expenses', 'CSM Release', 'Service Result'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
+        grid: chartGrid,
+        xAxis: { type: 'category', data: years, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(years.length / 8)) } },
+        yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: chartSplitLine },
+        series: [
+          { name: 'Revenue', type: 'bar', data: pnl.map(d => d.insurance_revenue), itemStyle: { color: ACCENT.emerald, borderRadius: [3, 3, 0, 0] } },
+          { name: 'Claims', type: 'bar', data: pnl.map(d => d.claims_incurred), itemStyle: { color: ACCENT.rose, borderRadius: [3, 3, 0, 0] } },
+          { name: 'Expenses', type: 'bar', data: pnl.map(d => d.expenses_incurred), itemStyle: { color: ACCENT.amber, borderRadius: [3, 3, 0, 0] } },
+          { name: 'CSM Release', type: 'line', data: pnl.map(d => d.csm_amortization), smooth: true, lineStyle: { width: 2, color: ACCENT.indigo }, itemStyle: { color: ACCENT.indigo } },
+          { name: 'Service Result', type: 'line', data: pnl.map(d => d.insurance_service_result), smooth: true, lineStyle: { width: 2, color: ACCENT.blue }, itemStyle: { color: ACCENT.blue } },
+        ],
+      }, true)
+      ifrs17PnlChart.resize()
+    }
   }
 }
 
 function renderTornadoChart() {
   if (!tornadoChartRef.value || !sensitivityData.value?.tornado_items) return
-  if (!tornadoChart) tornadoChart = markRaw(echarts.init(tornadoChartRef.value))
+  tornadoChart = getOrCreateChart(tornadoChartRef.value)
+  if (!tornadoChart) return
 
   const items = [...sensitivityData.value.tornado_items].reverse()
   const factors = items.map(d => d.risk_factor)
@@ -861,6 +947,7 @@ function renderTornadoChart() {
     ],
   }
   tornadoChart.setOption(option, true)
+  tornadoChart.resize()
 }
 
 function renderAllCharts() {
@@ -879,34 +966,34 @@ function renderAllCharts() {
 // ────────────────────────────────────────────────────────────
 
 onMounted(async () => {
-  await checkBackendConnection()
-  await executeValuation()
-
   resizeObserver = new ResizeObserver(() => {
-    heroChart?.resize()
-    reserveChart?.resize()
-    fanChart?.resize()
-    cashFlowChart?.resize()
-    distChart?.resize()
-    portfolioCfChart?.resize()
-    portfolioProdChart?.resize()
-    portfolioAgeChart?.resize()
-    ifrs17LrcChart?.resize()
-    ifrs17PnlChart?.resize()
-    tornadoChart?.resize()
+    const tab = activeTab.value
+    if (['overview', 'reserves', 'stochastic', 'cashflows', 'table'].includes(tab)) {
+      heroChart?.resize()
+    }
+    if (['overview', 'reserves'].includes(tab)) {
+      reserveChart?.resize()
+    }
+    if (['overview', 'stochastic'].includes(tab)) {
+      fanChart?.resize()
+      distChart?.resize()
+    }
+    if (tab === 'cashflows') {
+      cashFlowChart?.resize()
+    }
+    if (tab === 'ifrs17') {
+      ifrs17LrcChart?.resize()
+      ifrs17PnlChart?.resize()
+    }
+    if (tab === 'portfolio') {
+      portfolioCfChart?.resize()
+      portfolioProdChart?.resize()
+      portfolioAgeChart?.resize()
+    }
   })
 
-  if (heroChartRef.value) resizeObserver.observe(heroChartRef.value)
-  if (reserveChartRef.value) resizeObserver.observe(reserveChartRef.value)
-  if (fanChartRef.value) resizeObserver.observe(fanChartRef.value)
-  if (cashFlowChartRef.value) resizeObserver.observe(cashFlowChartRef.value)
-  if (distChartRef.value) resizeObserver.observe(distChartRef.value)
-  if (portfolioCfChartRef.value) resizeObserver.observe(portfolioCfChartRef.value)
-  if (portfolioProdChartRef.value) resizeObserver.observe(portfolioProdChartRef.value)
-  if (portfolioAgeChartRef.value) resizeObserver.observe(portfolioAgeChartRef.value)
-  if (ifrs17LrcChartRef.value) resizeObserver.observe(ifrs17LrcChartRef.value)
-  if (ifrs17PnlChartRef.value) resizeObserver.observe(ifrs17PnlChartRef.value)
-  if (tornadoChartRef.value) resizeObserver.observe(tornadoChartRef.value)
+  await checkBackendConnection()
+  await executeValuation()
 })
 
 onUnmounted(() => {
@@ -914,7 +1001,10 @@ onUnmounted(() => {
     activeSocketConnection.close()
     activeSocketConnection = null
   }
-  if (resizeObserver) resizeObserver.disconnect()
+  if (resizeObserver) {
+    resizeObserver.disconnect()
+    resizeObserver = null
+  }
   heroChart?.dispose()
   reserveChart?.dispose()
   fanChart?.dispose()
@@ -926,6 +1016,17 @@ onUnmounted(() => {
   ifrs17LrcChart?.dispose()
   ifrs17PnlChart?.dispose()
   tornadoChart?.dispose()
+  heroChart = null
+  reserveChart = null
+  fanChart = null
+  cashFlowChart = null
+  distChart = null
+  portfolioCfChart = null
+  portfolioProdChart = null
+  portfolioAgeChart = null
+  ifrs17LrcChart = null
+  ifrs17PnlChart = null
+  tornadoChart = null
 })
 </script>
 
@@ -1110,7 +1211,7 @@ onUnmounted(() => {
       <!-- ═══════════════════════════════════════════════════════ -->
       <!-- OVERVIEW TAB                                            -->
       <!-- ═══════════════════════════════════════════════════════ -->
-      <section v-if="activeTab === 'overview' || activeTab === 'reserves' || activeTab === 'stochastic' || activeTab === 'cashflows' || activeTab === 'table'" class="px-6 py-4 space-y-5">
+      <section v-show="['overview', 'reserves', 'stochastic', 'cashflows', 'table'].includes(activeTab)" class="px-6 py-4 space-y-5">
 
         <!-- Hero Card Row -->
         <div class="grid grid-cols-1 lg:grid-cols-3 gap-5">
@@ -1369,9 +1470,9 @@ onUnmounted(() => {
       <!-- ═══════════════════════════════════════════════════════ -->
       <!-- SENSITIVITY & STRESS TESTING TAB                       -->
       <!-- ═══════════════════════════════════════════════════════ -->
-      <section v-if="activeTab === 'sensitivity'" class="px-6 py-4 space-y-6">
+      <section v-show="activeTab === 'sensitivity'" class="px-6 py-4 space-y-6">
         <!-- Interactive Real-Time Stress Testing Sliders & Trajectory -->
-        <StressTestDashboard :contract-form="form" />
+        <StressTestDashboard :contract-form="form" :is-active="activeTab === 'sensitivity'" ref="stressTestDashboardRef" />
 
         <!-- Compound Macro-Scenarios -->
         <div v-if="sensitivityData && sensitivityData.combined_scenarios && sensitivityData.combined_scenarios.length" class="card p-5 space-y-3">
@@ -1416,7 +1517,7 @@ onUnmounted(() => {
       <!-- ═══════════════════════════════════════════════════════ -->
       <!-- IFRS 17 TAB                                            -->
       <!-- ═══════════════════════════════════════════════════════ -->
-      <section v-if="activeTab === 'ifrs17'" class="px-6 py-4 space-y-5">
+      <section v-show="activeTab === 'ifrs17'" class="px-6 py-4 space-y-5">
         <!-- Initial Recognition KPIs -->
         <div v-if="ifrs17Data?.initial_balance" class="grid grid-cols-2 lg:grid-cols-5 gap-4">
           <div class="card p-4">
@@ -1508,7 +1609,7 @@ onUnmounted(() => {
       <!-- ═══════════════════════════════════════════════════════ -->
       <!-- PORTFOLIO BATCH TAB                                     -->
       <!-- ═══════════════════════════════════════════════════════ -->
-      <section v-if="activeTab === 'portfolio'" class="px-6 py-4 space-y-5">
+      <section v-show="activeTab === 'portfolio'" class="px-6 py-4 space-y-5">
         <!-- Upload Card -->
         <div class="card p-5 space-y-4">
           <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-white/[0.06]">
@@ -1625,7 +1726,7 @@ onUnmounted(() => {
       <!-- ═══════════════════════════════════════════════════════ -->
       <!-- CONTRACT LOGIC BUILDER TAB                              -->
       <!-- ═══════════════════════════════════════════════════════ -->
-      <section v-if="activeTab === 'builder'" class="p-0">
+      <section v-show="activeTab === 'builder'" class="p-0">
         <ContractBuilderView />
       </section>
 
