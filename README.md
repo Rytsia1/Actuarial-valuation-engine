@@ -124,4 +124,3 @@ npm run dev
 
 ---
 
-*Built with precision for modern risk engineers.*
