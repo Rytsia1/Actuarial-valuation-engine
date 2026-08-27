@@ -10,11 +10,11 @@
 ## 📸 Platform Previews
 
 ### Valuation Dashboard
-![Actura Dashboard](image_f3c497.png)
+<img width="1917" height="1078" alt="Screenshot 2026-08-27 220531" src="https://github.com/user-attachments/assets/e414e87c-2bba-493a-a220-7665253687b7" />
 *Real-time stochastic projection, tail risk (CVaR) analysis, and comprehensive reserve profiles.*
 
 ### Contract Logic Blueprint Builder
-![Logic Builder](image_f3c49f.jpg)
+<img width="1917" height="1078" alt="Screenshot 2026-08-27 205835" src="https://github.com/user-attachments/assets/f237c254-c12a-4854-bddb-a260ba7050df" />)
 *A visual, node-based DAG (Directed Acyclic Graph) editor for designing insurance cash flow blueprints without writing code.*
 
 ---
