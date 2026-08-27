@@ -270,7 +270,7 @@ const distChartOption = computed(() => {
             <h3 class="text-sm font-semibold text-white">Short-Rate Quantile Fan Chart</h3>
             <p class="text-[11px] text-slate-500">{{ form.n_scenarios.toLocaleString() }} simulated paths — p5 through p95</p>
           </div>
-          <span class="badge badge-info">Vasicek ESG</span>
+
         </div>
         <div class="w-full h-80">
           <BaseChart :option="fanChartOption" :loading="loading" />
@@ -284,7 +284,7 @@ const distChartOption = computed(() => {
             <h3 class="text-sm font-semibold text-white">Terminal Liability Distribution</h3>
             <p class="text-[11px] text-slate-500">Empirical BEL density with VaR 95% tail highlighted in red</p>
           </div>
-          <span class="badge badge-danger">Tail Risk</span>
+
         </div>
         <div class="w-full h-80">
           <BaseChart :option="distChartOption" :loading="loading" />

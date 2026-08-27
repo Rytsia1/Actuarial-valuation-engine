@@ -358,7 +358,7 @@ const miniDistOption = computed(() => {
             <h3 class="text-sm font-semibold text-white">Reserve Profiles</h3>
             <p class="text-[11px] text-slate-500">Prospective vs Retrospective vs Gross GPV</p>
           </div>
-          <span class="badge badge-success">Verified</span>
+
         </div>
         <div class="w-full h-64">
           <div v-if="!deterministicData && !loading" class="h-full flex items-center justify-center text-xs text-slate-500 card-inset rounded-lg">
@@ -375,7 +375,7 @@ const miniDistOption = computed(() => {
             <h3 class="text-sm font-semibold text-white">Short-Rate Fan Chart &amp; Quantile Bands</h3>
             <p class="text-[11px] text-slate-500">{{ form.n_scenarios.toLocaleString() }} simulated paths — p5 through p95</p>
           </div>
-          <span class="badge badge-info">Vasicek ESG</span>
+
         </div>
         <div v-if="!stochasticData && !loading" class="h-64 flex flex-col items-center justify-center text-center space-y-2.5 card-inset rounded-lg">
           <p class="text-slate-400 text-xs">No stochastic simulation data available.</p>

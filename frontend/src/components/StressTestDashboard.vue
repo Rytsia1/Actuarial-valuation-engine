@@ -703,7 +703,7 @@ defineExpose({
               Comparing Baseline (Sky) vs. Stressed Reserve Trajectory (Rose) over time
             </p>
           </div>
-          <span class="badge badge-success">Smooth Morphing</span>
+
         </div>
         <div class="w-full h-80">
           <BaseChart ref="trajectoryChartRef" :option="trajectoryChartOption" :loading="loading" />

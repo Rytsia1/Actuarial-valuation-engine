@@ -161,7 +161,7 @@ const reserveChartOption = computed(() => {
             Equivalence identity verification: Prospective vs Retrospective vs Gross Premium Valuation (GPV)
           </p>
         </div>
-        <span class="badge badge-success">Identity Verified: ₜV_pro ≡ ₜV_retro</span>
+
       </div>
       <div class="w-full h-80">
         <BaseChart :option="reserveChartOption" :loading="loading" />

@@ -1,5 +1,6 @@
 <script setup>
 import { defineProps } from 'vue'
+import { HelpCircle } from 'lucide-vue-next'
 
 const props = defineProps({
   deterministic: {
@@ -32,8 +33,9 @@ function formatCurrency(val) {
     <div class="glass-panel rounded-xl p-4 relative overflow-hidden group">
       <div class="absolute top-0 right-0 h-16 w-16 bg-sky-500/10 rounded-bl-full pointer-events-none transition-all duration-300 group-hover:scale-110"></div>
       <div class="flex items-center justify-between mb-1">
-        <span class="text-[11px] font-mono font-medium text-slate-400 uppercase tracking-wider">
+        <span class="text-[11px] font-mono font-medium text-slate-400 uppercase tracking-wider flex items-center gap-1.5 group/tooltip cursor-help" title="The level annual premium required to fund the benefits based on the equivalence principle.">
           Annual Net Premium (P)
+          <HelpCircle class="w-3 h-3 text-slate-500 group-hover/tooltip:text-sky-400 transition-colors" />
         </span>
         <span class="px-1.5 py-0.5 text-[9px] font-mono rounded bg-sky-500/10 text-sky-400 border border-sky-500/20">
           Equivalence
@@ -54,8 +56,9 @@ function formatCurrency(val) {
     <div class="glass-panel rounded-xl p-4 relative overflow-hidden group">
       <div class="absolute top-0 right-0 h-16 w-16 bg-indigo-500/10 rounded-bl-full pointer-events-none transition-all duration-300 group-hover:scale-110"></div>
       <div class="flex items-center justify-between mb-1">
-        <span class="text-[11px] font-mono font-medium text-slate-400 uppercase tracking-wider">
+        <span class="text-[11px] font-mono font-medium text-slate-400 uppercase tracking-wider flex items-center gap-1.5 group/tooltip cursor-help" title="Best Estimate Liability. A negative value indicates a profitable contract (inflows > outflows) under this engine's convention.">
           Mean BEL / GPV
+          <HelpCircle class="w-3 h-3 text-slate-500 group-hover/tooltip:text-indigo-400 transition-colors" />
         </span>
         <span
           :class="[
@@ -73,7 +76,7 @@ function formatCurrency(val) {
         <span v-else>{{ formatCurrency(stochastic?.mean_bel ?? deterministic?.bel) }}</span>
       </div>
       <div class="flex items-center space-x-2 text-xs text-slate-400 mt-2 font-mono">
-        <span>Std Dev: {{ formatCurrency(stochastic?.std_bel) }}</span>
+        <span class="cursor-help" title="Standard Deviation (σ). Represents the dispersion of possible BEL outcomes.">σ (Std. Dev.): {{ formatCurrency(stochastic?.std_bel) }}</span>
       </div>
     </div>
 
@@ -81,8 +84,9 @@ function formatCurrency(val) {
     <div class="glass-panel rounded-xl p-4 relative overflow-hidden group">
       <div class="absolute top-0 right-0 h-16 w-16 bg-rose-500/10 rounded-bl-full pointer-events-none transition-all duration-300 group-hover:scale-110"></div>
       <div class="flex items-center justify-between mb-1">
-        <span class="text-[11px] font-mono font-medium text-slate-400 uppercase tracking-wider">
+        <span class="text-[11px] font-mono font-medium text-slate-400 uppercase tracking-wider flex items-center gap-1.5 group/tooltip cursor-help" title="The threshold liability that will not be exceeded with 95% confidence.">
           Value at Risk (VaR 95%)
+          <HelpCircle class="w-3 h-3 text-slate-500 group-hover/tooltip:text-rose-400 transition-colors" />
         </span>
         <span class="px-1.5 py-0.5 text-[9px] font-mono rounded bg-rose-500/10 text-rose-400 border border-rose-500/20">
           Tail Risk
@@ -101,8 +105,9 @@ function formatCurrency(val) {
     <div class="glass-panel rounded-xl p-4 relative overflow-hidden group">
       <div class="absolute top-0 right-0 h-16 w-16 bg-purple-500/10 rounded-bl-full pointer-events-none transition-all duration-300 group-hover:scale-110"></div>
       <div class="flex items-center justify-between mb-1">
-        <span class="text-[11px] font-mono font-medium text-slate-400 uppercase tracking-wider">
+        <span class="text-[11px] font-mono font-medium text-slate-400 uppercase tracking-wider flex items-center gap-1.5 group/tooltip cursor-help" title="Conditional Value at Risk (Expected Shortfall). The average liability in the worst 5% of scenarios.">
           Expected Shortfall (CVaR 95%)
+          <HelpCircle class="w-3 h-3 text-slate-500 group-hover/tooltip:text-purple-400 transition-colors" />
         </span>
         <span class="px-1.5 py-0.5 text-[9px] font-mono rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">
           CTE 95

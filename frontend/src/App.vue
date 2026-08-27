@@ -36,6 +36,7 @@ const activeTab = ref('overview')
 const backendStatus = ref('checking')
 const backendDetails = ref(null)
 const sidebarOpen = ref(false)
+const lastRunTime = ref(null)
 
 // Individual Request States (loading, error, data lifecycle)
 const detState = createRequestState()
@@ -386,6 +387,7 @@ async function executeValuation() {
     })
 
   await Promise.allSettled([ifrs17Task, sensTask, stochTask])
+  lastRunTime.value = new Date().toLocaleTimeString('en-US', { hour12: false })
 }
 
 // On-demand lazy loader for tabs
@@ -738,6 +740,11 @@ onUnmounted(() => {
               :available-tables="availableTables"
               :loading="loading"
               :sim-progress="simProgress"
+              :det-loading="detState.loading.value"
+              :ifrs17-loading="ifrs17State.loading.value"
+              :sens-loading="sensState.loading.value"
+              :stoch-loading="stochState.loading.value"
+              :last-run-time="lastRunTime"
               @submit="executeValuation"
               @open-table-modal="showTableModal = true"
             />
