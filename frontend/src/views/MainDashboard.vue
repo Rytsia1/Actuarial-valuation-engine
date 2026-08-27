@@ -13,23 +13,23 @@ import {
   uploadPortfolioCSV,
   getSamplePortfolioCSVUrl,
   ActuaryApiError,
-} from './services/actuaryApi'
-import { connectSimulationSocket } from './services/simulationSocket'
+} from '../services/actuaryApi'
+import { connectSimulationSocket } from '../services/simulationSocket'
 
 // Decomposed Modular Dashboard Components
-import ValuationForm from './components/ValuationForm.vue'
-import OverviewDashboard from './components/OverviewDashboard.vue'
-import ReserveDashboard from './components/ReserveDashboard.vue'
-import StochasticDashboard from './components/StochasticDashboard.vue'
-import IFRS17Dashboard from './components/IFRS17Dashboard.vue'
-import SensitivityDashboard from './components/SensitivityDashboard.vue'
-import PortfolioDashboard from './components/PortfolioDashboard.vue'
-import CashFlowTable from './components/CashFlowTable.vue'
-import ContractBuilderView from './views/ContractBuilderView.vue'
-import CommandPalette from './components/CommandPalette.vue'
-import RunHistoryModal from './components/RunHistoryModal.vue'
-import { createRequestState } from './utils/useAsyncState'
-import { exportValuationCSV } from './utils/export.js'
+import ValuationForm from '../components/ValuationForm.vue'
+import OverviewDashboard from '../components/OverviewDashboard.vue'
+import ReserveDashboard from '../components/ReserveDashboard.vue'
+import StochasticDashboard from '../components/StochasticDashboard.vue'
+import IFRS17Dashboard from '../components/IFRS17Dashboard.vue'
+import SensitivityDashboard from '../components/SensitivityDashboard.vue'
+import PortfolioDashboard from '../components/PortfolioDashboard.vue'
+import CashFlowTable from '../components/CashFlowTable.vue'
+import ContractBuilderView from './ContractBuilderView.vue'
+import CommandPalette from '../components/CommandPalette.vue'
+import RunHistoryModal from '../components/RunHistoryModal.vue'
+import { createRequestState } from '../utils/useAsyncState'
+import { exportValuationCSV } from '../utils/export.js'
 
 // ────────────────────────────────────────────────────────────
 // Reactive Dashboard State & Request State Machines
