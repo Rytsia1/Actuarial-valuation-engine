@@ -1,6 +1,7 @@
 <script setup>
-import { ref, watch, onMounted, onUnmounted, nextTick, markRaw } from 'vue'
+import { computed } from 'vue'
 import * as echarts from 'echarts'
+import BaseChart from './BaseChart.vue'
 
 const props = defineProps({
   deterministicData: {
@@ -16,10 +17,6 @@ const props = defineProps({
     default: true,
   },
 })
-
-const reserveChartRef = ref(null)
-let reserveChart = null
-let resizeObserver = null
 
 const ACCENT = {
   blue: '#38BDF8',
@@ -48,30 +45,16 @@ function formatCurrency(val) {
   }).format(val)
 }
 
-function getOrCreateChart(domRef) {
-  if (!domRef || domRef.clientWidth === 0 || domRef.clientHeight === 0) return null
-  let chart = echarts.getInstanceByDom(domRef)
-  if (!chart) {
-    chart = markRaw(echarts.init(domRef))
-    if (resizeObserver) {
-      resizeObserver.observe(domRef)
-    }
-  }
-  return chart
-}
+const reserveChartOption = computed(() => {
+  const profile = props.deterministicData?.reserve_profile
+  if (!profile || !profile.length) return null
 
-function renderReserveChart() {
-  if (!reserveChartRef.value || !props.deterministicData?.reserve_profile) return
-  reserveChart = getOrCreateChart(reserveChartRef.value)
-  if (!reserveChart) return
-
-  const profile = props.deterministicData.reserve_profile
   const durations = profile.map(r => `t=${r.duration}`)
   const prospective = profile.map(r => r.reserve_prospective)
   const retrospective = profile.map(r => r.reserve_retrospective)
   const gross = profile.map(r => r.gross_reserve)
 
-  const option = {
+  return {
     backgroundColor: 'transparent',
     tooltip: { ...chartTooltip, trigger: 'axis' },
     legend: {
@@ -129,34 +112,6 @@ function renderReserveChart() {
       },
     ],
   }
-  reserveChart.setOption(option, true)
-  reserveChart.resize()
-}
-
-watch(
-  () => [props.deterministicData, props.isActive],
-  () => {
-    if (props.isActive) {
-      nextTick(renderReserveChart)
-    }
-  },
-  { deep: true }
-)
-
-onMounted(() => {
-  resizeObserver = new ResizeObserver(() => {
-    if (props.isActive) {
-      reserveChart?.resize()
-    }
-  })
-  if (props.isActive) {
-    nextTick(renderReserveChart)
-  }
-})
-
-onUnmounted(() => {
-  resizeObserver?.disconnect()
-  reserveChart?.dispose()
 })
 </script>
 
@@ -173,7 +128,9 @@ onUnmounted(() => {
         </div>
         <span class="badge badge-success">Identity Verified: ₜV_pro ≡ ₜV_retro</span>
       </div>
-      <div ref="reserveChartRef" class="w-full h-80"></div>
+      <div class="w-full h-80">
+        <BaseChart :option="reserveChartOption" :loading="loading" />
+      </div>
     </div>
 
     <!-- Duration by Duration Reserve Table -->

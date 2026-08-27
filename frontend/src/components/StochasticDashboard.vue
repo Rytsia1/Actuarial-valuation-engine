@@ -1,6 +1,6 @@
 <script setup>
-import { ref, watch, onMounted, onUnmounted, nextTick, markRaw } from 'vue'
-import * as echarts from 'echarts'
+import { computed } from 'vue'
+import BaseChart from './BaseChart.vue'
 
 const props = defineProps({
   stochasticData: {
@@ -22,13 +22,6 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['run-valuation'])
-
-const fanChartRef = ref(null)
-const distChartRef = ref(null)
-
-let fanChart = null
-let distChart = null
-let resizeObserver = null
 
 const ACCENT = {
   blue: '#38BDF8',
@@ -59,28 +52,15 @@ function formatCurrency(val) {
   }).format(val)
 }
 
-function getOrCreateChart(domRef) {
-  if (!domRef || domRef.clientWidth === 0 || domRef.clientHeight === 0) return null
-  let chart = echarts.getInstanceByDom(domRef)
-  if (!chart) {
-    chart = markRaw(echarts.init(domRef))
-    if (resizeObserver) {
-      resizeObserver.observe(domRef)
-    }
-  }
-  return chart
-}
-
-function renderFanChart() {
-  if (!fanChartRef.value || (!props.stochasticData?.quantiles && !props.stochasticData?.fan_chart_rates)) return
-  fanChart = getOrCreateChart(fanChartRef.value)
-  if (!fanChart) return
+const fanChartOption = computed(() => {
+  const stoch = props.stochasticData
+  if (!stoch || (!stoch.quantiles && !stoch.fan_chart_rates)) return null
 
   let years = [], p5 = [], p25 = [], p50 = [], p75 = [], p95 = []
 
-  if (props.stochasticData.quantiles) {
-    const q = props.stochasticData.quantiles
-    const timesteps = props.stochasticData.timesteps || q.p50.map((_, i) => i)
+  if (stoch.quantiles) {
+    const q = stoch.quantiles
+    const timesteps = stoch.timesteps || q.p50.map((_, i) => i)
     years = timesteps.map(t => `t=${t}`)
     p5 = q.p5.map(v => (v * 100).toFixed(2))
     p25 = q.p25.map(v => (v * 100).toFixed(2))
@@ -88,7 +68,7 @@ function renderFanChart() {
     p75 = q.p75.map(v => (v * 100).toFixed(2))
     p95 = q.p95.map(v => (v * 100).toFixed(2))
   } else {
-    const rates = props.stochasticData.fan_chart_rates
+    const rates = stoch.fan_chart_rates
     years = rates.map(d => `t=${d.year}`)
     p5 = rates.map(d => (d.p5 * 100).toFixed(2))
     p25 = rates.map(d => (d.p25 * 100).toFixed(2))
@@ -97,7 +77,7 @@ function renderFanChart() {
     p95 = rates.map(d => (d.p95 * 100).toFixed(2))
   }
 
-  const sampleSeries = (props.stochasticData.sample_paths || []).slice(0, 10).map((path, idx) => ({
+  const sampleSeries = (stoch.sample_paths || []).slice(0, 10).map((path, idx) => ({
     name: `Trace ${idx + 1}`,
     type: 'line',
     data: path.map(r => (r * 100).toFixed(2)),
@@ -107,7 +87,7 @@ function renderFanChart() {
     silent: true,
   }))
 
-  const option = {
+  return {
     backgroundColor: 'transparent',
     tooltip: { ...chartTooltip, trigger: 'axis' },
     legend: { data: ['p95', 'Median', 'p5'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
@@ -130,20 +110,17 @@ function renderFanChart() {
       { name: 'p5', type: 'line', data: p5, smooth: true, symbol: 'none', lineStyle: { width: 1.2, color: 'rgba(99, 102, 241, 0.6)' } },
     ],
   }
-  fanChart.setOption(option, true)
-  fanChart.resize()
-}
+})
 
-function renderDistChart() {
-  if (!distChartRef.value || (!props.stochasticData?.terminal_distribution && !props.stochasticData?.liability_histogram)) return
-  distChart = getOrCreateChart(distChartRef.value)
-  if (!distChart) return
+const distChartOption = computed(() => {
+  const stoch = props.stochasticData
+  if (!stoch || (!stoch.terminal_distribution && !stoch.liability_histogram)) return null
 
   let bins = [], counts = []
-  const var95 = props.stochasticData.var_95 || props.stochasticData.terminal_distribution?.var_95 || 0
+  const var95 = stoch.var_95 || stoch.terminal_distribution?.var_95 || 0
 
-  if (props.stochasticData.terminal_distribution) {
-    const td = props.stochasticData.terminal_distribution
+  if (stoch.terminal_distribution) {
+    const td = stoch.terminal_distribution
     const binEdges = td.bin_edges
     counts = td.counts.map((c, i) => {
       const mid = (binEdges[i] + binEdges[i + 1]) / 2.0
@@ -151,7 +128,7 @@ function renderDistChart() {
     })
     bins = td.counts.map((_, i) => `$${((binEdges[i] + binEdges[i + 1]) / 2000.0).toFixed(1)}k`)
   } else {
-    const hist = props.stochasticData.liability_histogram
+    const hist = stoch.liability_histogram
     bins = hist.map(d => `$${(d.bin_mid / 1000).toFixed(1)}k`)
     counts = hist.map(d => ({
       value: d.count,
@@ -159,7 +136,7 @@ function renderDistChart() {
     }))
   }
 
-  const option = {
+  return {
     backgroundColor: 'transparent',
     tooltip: { ...chartTooltip, trigger: 'axis' },
     grid: { top: 25, left: 50, right: 20, bottom: 30 },
@@ -167,42 +144,6 @@ function renderDistChart() {
     yAxis: { type: 'value', axisLabel: chartAxisLabel, splitLine: chartSplitLine },
     series: [{ name: 'Scenarios', type: 'bar', data: counts, barWidth: '85%' }],
   }
-  distChart.setOption(option, true)
-  distChart.resize()
-}
-
-function renderAllCharts() {
-  if (!props.isActive) return
-  renderFanChart()
-  renderDistChart()
-}
-
-watch(
-  () => [props.stochasticData, props.isActive],
-  () => {
-    if (props.isActive) {
-      nextTick(renderAllCharts)
-    }
-  },
-  { deep: true }
-)
-
-onMounted(() => {
-  resizeObserver = new ResizeObserver(() => {
-    if (props.isActive) {
-      fanChart?.resize()
-      distChart?.resize()
-    }
-  })
-  if (props.isActive) {
-    nextTick(renderAllCharts)
-  }
-})
-
-onUnmounted(() => {
-  resizeObserver?.disconnect()
-  fanChart?.dispose()
-  distChart?.dispose()
 })
 </script>
 
@@ -271,7 +212,9 @@ onUnmounted(() => {
           </div>
           <span class="badge badge-info">Vasicek ESG</span>
         </div>
-        <div ref="fanChartRef" class="w-full h-80"></div>
+        <div class="w-full h-80">
+          <BaseChart :option="fanChartOption" :loading="loading" />
+        </div>
       </div>
 
       <!-- Empirical Density Distribution -->
@@ -283,7 +226,9 @@ onUnmounted(() => {
           </div>
           <span class="badge badge-danger">Tail Risk</span>
         </div>
-        <div ref="distChartRef" class="w-full h-80"></div>
+        <div class="w-full h-80">
+          <BaseChart :option="distChartOption" :loading="loading" />
+        </div>
       </div>
     </div>
   </div>

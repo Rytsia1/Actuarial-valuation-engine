@@ -47,11 +47,10 @@ const error = ref(null)
 const stressData = shallowRef(null)
 let needsUpdate = false
 
+import BaseChart from './BaseChart.vue'
+
 const tornadoChartRef = ref(null)
 const trajectoryChartRef = ref(null)
-let tornadoChart = null
-let trajectoryChart = null
-let resizeObserver = null
 let debounceTimer = null
 
 // ────────────────────────────────────────────────────────────
@@ -158,9 +157,6 @@ async function fetchStressTest() {
 
     const res = await runStressTest(payload)
     stressData.value = res
-
-    await nextTick()
-    renderAllCharts()
   } catch (err) {
     console.error('Stress test valuation failed:', err)
     error.value = err?.message || 'Failed to calculate stress test.'
@@ -208,7 +204,7 @@ watch(
   { deep: true }
 )
 
-// Watch isActive prop for on-demand fetch and resize
+// Watch isActive prop for on-demand fetch
 watch(
   () => props.isActive,
   async (active) => {
@@ -216,9 +212,6 @@ watch(
       if (!stressData.value || needsUpdate) {
         needsUpdate = false
         await fetchStressTest()
-      } else {
-        await nextTick()
-        resizeCharts()
       }
     }
   },
@@ -226,7 +219,7 @@ watch(
 )
 
 // ────────────────────────────────────────────────────────────
-// ECharts Theme & Chart Renderers
+// ECharts Computed Options
 // ────────────────────────────────────────────────────────────
 
 const chartTooltip = {
@@ -240,23 +233,8 @@ const chartAxisLabel = { color: '#64748B', fontSize: 10, fontFamily: "'JetBrains
 const chartSplitLine = { lineStyle: { color: 'rgba(255, 255, 255, 0.04)' } }
 const chartAxisLine = { lineStyle: { color: '#1E293B' } }
 
-function getOrCreateChart(domRef) {
-  if (!domRef) return null
-  if (domRef.clientWidth === 0 || domRef.clientHeight === 0) return null
-  let chart = echarts.getInstanceByDom(domRef)
-  if (!chart) {
-    chart = markRaw(echarts.init(domRef))
-    if (resizeObserver) {
-      resizeObserver.observe(domRef)
-    }
-  }
-  return chart
-}
-
-function renderTornadoChart() {
-  if (!tornadoChartRef.value || !Array.isArray(stressData.value?.tornado_data) || stressData.value.tornado_data.length === 0) return
-  tornadoChart = getOrCreateChart(tornadoChartRef.value)
-  if (!tornadoChart) return
+const tornadoChartOption = computed(() => {
+  if (!Array.isArray(stressData.value?.tornado_data) || stressData.value.tornado_data.length === 0) return null
 
   const items = [...stressData.value.tornado_data].reverse()
   const factors = items.map(d => d?.risk_factor ?? 'Factor')
@@ -264,7 +242,7 @@ function renderTornadoChart() {
   const highDeltas = items.map(d => Number(d?.high_delta ?? 0))
   const currentDeltas = items.map(d => Number(d?.current_delta ?? 0))
 
-  const option = {
+  return {
     backgroundColor: 'transparent',
     tooltip: {
       ...chartTooltip,
@@ -332,21 +310,17 @@ function renderTornadoChart() {
       },
     ],
   }
-  tornadoChart.setOption(option, false)
-  tornadoChart.resize()
-}
+})
 
-function renderTrajectoryChart() {
-  if (!trajectoryChartRef.value || !Array.isArray(stressData.value?.reserve_trajectory) || stressData.value.reserve_trajectory.length === 0) return
-  trajectoryChart = getOrCreateChart(trajectoryChartRef.value)
-  if (!trajectoryChart) return
+const trajectoryChartOption = computed(() => {
+  if (!Array.isArray(stressData.value?.reserve_trajectory) || stressData.value.reserve_trajectory.length === 0) return null
 
   const traj = stressData.value.reserve_trajectory
   const durations = traj.map(d => `t=${d?.duration ?? 0}`)
   const baseReserves = traj.map(d => Number(d?.baseline_reserve ?? 0))
   const stressedReserves = traj.map(d => Number(d?.stressed_reserve ?? 0))
 
-  const option = {
+  return {
     backgroundColor: 'transparent',
     tooltip: {
       ...chartTooltip,
@@ -418,49 +392,9 @@ function renderTrajectoryChart() {
       },
     ],
   }
-  trajectoryChart.setOption(option, false)
-  trajectoryChart.resize()
-}
-
-function renderAllCharts() {
-  renderTornadoChart()
-  renderTrajectoryChart()
-  if (resizeObserver) {
-    if (tornadoChartRef.value) resizeObserver.observe(tornadoChartRef.value)
-    if (trajectoryChartRef.value) resizeObserver.observe(trajectoryChartRef.value)
-  }
-}
-
-function resizeCharts() {
-  if (tornadoChart) {
-    tornadoChart.resize()
-  } else {
-    renderTornadoChart()
-  }
-
-  if (trajectoryChart) {
-    trajectoryChart.resize()
-  } else {
-    renderTrajectoryChart()
-  }
-}
-
-// ────────────────────────────────────────────────────────────
-// Lifecycle
-// ────────────────────────────────────────────────────────────
+})
 
 onMounted(() => {
-  resizeObserver = new ResizeObserver(() => {
-    if (props.isActive) {
-      try {
-        tornadoChart?.resize()
-        trajectoryChart?.resize()
-      } catch (err) {
-        console.warn('Error during chart resize:', err)
-      }
-    }
-  })
-
   if (props.isActive && !stressData.value) {
     fetchStressTest()
   }
@@ -468,12 +402,12 @@ onMounted(() => {
 
 onUnmounted(() => {
   if (debounceTimer) clearTimeout(debounceTimer)
-  if (resizeObserver) resizeObserver.disconnect()
-  tornadoChart?.dispose()
-  trajectoryChart?.dispose()
-  tornadoChart = null
-  trajectoryChart = null
 })
+
+function resizeCharts() {
+  tornadoChartRef.value?.resize?.()
+  trajectoryChartRef.value?.resize?.()
+}
 
 defineExpose({
   resizeCharts,
@@ -739,7 +673,9 @@ defineExpose({
           </div>
           <span class="badge badge-info">OAT + Sliders</span>
         </div>
-        <div ref="tornadoChartRef" class="w-full h-80"></div>
+        <div class="w-full h-80">
+          <BaseChart ref="tornadoChartRef" :option="tornadoChartOption" :loading="loading" />
+        </div>
       </div>
 
       <!-- Chart 2: Reserve Trajectory (Baseline vs Stressed) -->
@@ -753,7 +689,9 @@ defineExpose({
           </div>
           <span class="badge badge-success">Smooth Morphing</span>
         </div>
-        <div ref="trajectoryChartRef" class="w-full h-80"></div>
+        <div class="w-full h-80">
+          <BaseChart ref="trajectoryChartRef" :option="trajectoryChartOption" :loading="loading" />
+        </div>
       </div>
     </div>
 

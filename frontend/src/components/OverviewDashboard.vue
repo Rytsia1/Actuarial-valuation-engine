@@ -1,6 +1,7 @@
 <script setup>
-import { ref, watch, onMounted, onUnmounted, nextTick, markRaw } from 'vue'
+import { computed } from 'vue'
 import * as echarts from 'echarts'
+import BaseChart from './BaseChart.vue'
 
 const props = defineProps({
   deterministicData: {
@@ -27,19 +28,7 @@ const props = defineProps({
 
 const emit = defineEmits(['run-valuation'])
 
-// Chart refs
-const heroChartRef = ref(null)
-const miniReserveChartRef = ref(null)
-const miniFanChartRef = ref(null)
-const miniDistChartRef = ref(null)
-
-let heroChart = null
-let miniReserveChart = null
-let miniFanChart = null
-let miniDistChart = null
-let resizeObserver = null
-
-// Palette & constants
+// Chart Theme Constants
 const ACCENT = {
   blue: '#38BDF8',
   indigo: '#6366F1',
@@ -69,33 +58,19 @@ function formatCurrency(val) {
   }).format(val)
 }
 
-function getOrCreateChart(domRef) {
-  if (!domRef || domRef.clientWidth === 0 || domRef.clientHeight === 0) return null
-  let chart = echarts.getInstanceByDom(domRef)
-  if (!chart) {
-    chart = markRaw(echarts.init(domRef))
-    if (resizeObserver) {
-      resizeObserver.observe(domRef)
-    }
-  }
-  return chart
-}
+// 1. Hero Cumulative Liability Option
+const heroChartOption = computed(() => {
+  const cfs = props.deterministicData?.cash_flows
+  if (!cfs || !cfs.length) return null
 
-function renderHeroChart() {
-  if (!heroChartRef.value || !props.deterministicData?.cash_flows) return
-  heroChart = getOrCreateChart(heroChartRef.value)
-  if (!heroChart) return
-
-  const cfs = props.deterministicData.cash_flows
   const years = cfs.map(d => `Yr ${d.year + 1}`)
-
   let running = 0
   const cumLiability = cfs.map(d => {
     running += d.net_liability_cf
     return running
   })
 
-  const option = {
+  return {
     backgroundColor: 'transparent',
     tooltip: { ...chartTooltip, trigger: 'axis' },
     grid: { top: 30, left: 55, right: 20, bottom: 30 },
@@ -129,22 +104,19 @@ function renderHeroChart() {
       },
     ],
   }
-  heroChart.setOption(option, true)
-  heroChart.resize()
-}
+})
 
-function renderMiniReserveChart() {
-  if (!miniReserveChartRef.value || !props.deterministicData?.reserve_profile) return
-  miniReserveChart = getOrCreateChart(miniReserveChartRef.value)
-  if (!miniReserveChart) return
+// 2. Mini Reserve Chart Option
+const miniReserveOption = computed(() => {
+  const profile = props.deterministicData?.reserve_profile
+  if (!profile || !profile.length) return null
 
-  const profile = props.deterministicData.reserve_profile
   const durations = profile.map(r => `t=${r.duration}`)
   const prospective = profile.map(r => r.reserve_prospective)
   const retrospective = profile.map(r => r.reserve_retrospective)
   const gross = profile.map(r => r.gross_reserve)
 
-  const option = {
+  return {
     backgroundColor: 'transparent',
     tooltip: { ...chartTooltip, trigger: 'axis' },
     legend: {
@@ -202,20 +174,18 @@ function renderMiniReserveChart() {
       },
     ],
   }
-  miniReserveChart.setOption(option, true)
-  miniReserveChart.resize()
-}
+})
 
-function renderMiniFanChart() {
-  if (!miniFanChartRef.value || (!props.stochasticData?.quantiles && !props.stochasticData?.fan_chart_rates)) return
-  miniFanChart = getOrCreateChart(miniFanChartRef.value)
-  if (!miniFanChart) return
+// 3. Mini Stochastic Fan Chart Option
+const miniFanOption = computed(() => {
+  const stoch = props.stochasticData
+  if (!stoch || (!stoch.quantiles && !stoch.fan_chart_rates)) return null
 
   let years = [], p5 = [], p25 = [], p50 = [], p75 = [], p95 = []
 
-  if (props.stochasticData.quantiles) {
-    const q = props.stochasticData.quantiles
-    const timesteps = props.stochasticData.timesteps || q.p50.map((_, i) => i)
+  if (stoch.quantiles) {
+    const q = stoch.quantiles
+    const timesteps = stoch.timesteps || q.p50.map((_, i) => i)
     years = timesteps.map(t => `t=${t}`)
     p5 = q.p5.map(v => (v * 100).toFixed(2))
     p25 = q.p25.map(v => (v * 100).toFixed(2))
@@ -223,7 +193,7 @@ function renderMiniFanChart() {
     p75 = q.p75.map(v => (v * 100).toFixed(2))
     p95 = q.p95.map(v => (v * 100).toFixed(2))
   } else {
-    const rates = props.stochasticData.fan_chart_rates
+    const rates = stoch.fan_chart_rates
     years = rates.map(d => `t=${d.year}`)
     p5 = rates.map(d => (d.p5 * 100).toFixed(2))
     p25 = rates.map(d => (d.p25 * 100).toFixed(2))
@@ -232,7 +202,7 @@ function renderMiniFanChart() {
     p95 = rates.map(d => (d.p95 * 100).toFixed(2))
   }
 
-  const option = {
+  return {
     backgroundColor: 'transparent',
     tooltip: { ...chartTooltip, trigger: 'axis' },
     legend: { data: ['p95', 'Median', 'p5'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
@@ -254,20 +224,18 @@ function renderMiniFanChart() {
       { name: 'p5', type: 'line', data: p5, smooth: true, symbol: 'none', lineStyle: { width: 1, color: 'rgba(99, 102, 241, 0.5)' } },
     ],
   }
-  miniFanChart.setOption(option, true)
-  miniFanChart.resize()
-}
+})
 
-function renderMiniDistChart() {
-  if (!miniDistChartRef.value || (!props.stochasticData?.terminal_distribution && !props.stochasticData?.liability_histogram)) return
-  miniDistChart = getOrCreateChart(miniDistChartRef.value)
-  if (!miniDistChart) return
+// 4. Mini Distribution Option
+const miniDistOption = computed(() => {
+  const stoch = props.stochasticData
+  if (!stoch || (!stoch.terminal_distribution && !stoch.liability_histogram)) return null
 
   let bins = [], counts = []
-  const var95 = props.stochasticData.var_95 || props.stochasticData.terminal_distribution?.var_95 || 0
+  const var95 = stoch.var_95 || stoch.terminal_distribution?.var_95 || 0
 
-  if (props.stochasticData.terminal_distribution) {
-    const td = props.stochasticData.terminal_distribution
+  if (stoch.terminal_distribution) {
+    const td = stoch.terminal_distribution
     const binEdges = td.bin_edges
     counts = td.counts.map((c, i) => {
       const mid = (binEdges[i] + binEdges[i + 1]) / 2.0
@@ -275,12 +243,12 @@ function renderMiniDistChart() {
     })
     bins = td.counts.map((_, i) => `$${((binEdges[i] + binEdges[i + 1]) / 2000.0).toFixed(1)}k`)
   } else {
-    const hist = props.stochasticData.liability_histogram
+    const hist = stoch.liability_histogram
     bins = hist.map(d => `$${(d.bin_mid / 1000).toFixed(1)}k`)
     counts = hist.map(d => ({ value: d.count, itemStyle: { color: d.bin_mid >= var95 ? ACCENT.rose : ACCENT.indigo, borderRadius: [2, 2, 0, 0] } }))
   }
 
-  const option = {
+  return {
     backgroundColor: 'transparent',
     tooltip: { ...chartTooltip, trigger: 'axis' },
     grid: { top: 25, left: 50, right: 20, bottom: 30 },
@@ -288,50 +256,6 @@ function renderMiniDistChart() {
     yAxis: { type: 'value', axisLabel: chartAxisLabel, splitLine: chartSplitLine },
     series: [{ name: 'Scenarios', type: 'bar', data: counts, barWidth: '85%' }],
   }
-  miniDistChart.setOption(option, true)
-  miniDistChart.resize()
-}
-
-function renderAllCharts() {
-  if (!props.isActive) return
-  renderHeroChart()
-  renderMiniReserveChart()
-  renderMiniFanChart()
-  renderMiniDistChart()
-}
-
-watch(
-  () => [props.deterministicData, props.stochasticData, props.isActive],
-  () => {
-    if (props.isActive) {
-      nextTick(() => {
-        renderAllCharts()
-      })
-    }
-  },
-  { deep: true }
-)
-
-onMounted(() => {
-  resizeObserver = new ResizeObserver(() => {
-    if (props.isActive) {
-      heroChart?.resize()
-      miniReserveChart?.resize()
-      miniFanChart?.resize()
-      miniDistChart?.resize()
-    }
-  })
-  if (props.isActive) {
-    nextTick(renderAllCharts)
-  }
-})
-
-onUnmounted(() => {
-  resizeObserver?.disconnect()
-  heroChart?.dispose()
-  miniReserveChart?.dispose()
-  miniFanChart?.dispose()
-  miniDistChart?.dispose()
 })
 </script>
 
@@ -357,7 +281,9 @@ onUnmounted(() => {
             <div class="text-[11px] text-slate-500 font-mono capitalize">{{ form.product_type.replace('_', ' ') }}</div>
           </div>
         </div>
-        <div ref="heroChartRef" class="w-full h-52 mt-2"></div>
+        <div class="w-full h-52 mt-2">
+          <BaseChart :option="heroChartOption" :loading="loading" />
+        </div>
       </div>
 
       <!-- Summary Cards Column -->
@@ -402,7 +328,9 @@ onUnmounted(() => {
           </div>
           <span class="badge badge-success">Verified</span>
         </div>
-        <div ref="miniReserveChartRef" class="w-full h-64"></div>
+        <div class="w-full h-64">
+          <BaseChart :option="miniReserveOption" :loading="loading" />
+        </div>
       </div>
 
       <!-- Fan Chart Card -->
@@ -420,7 +348,9 @@ onUnmounted(() => {
             Run Valuation Engine
           </button>
         </div>
-        <div v-show="stochasticData || loading" ref="miniFanChartRef" class="w-full h-64"></div>
+        <div v-show="stochasticData || loading" class="w-full h-64">
+          <BaseChart :option="miniFanOption" :loading="loading" />
+        </div>
       </div>
 
       <!-- Distribution Card -->
@@ -432,7 +362,9 @@ onUnmounted(() => {
         <div v-if="!stochasticData && !loading" class="h-64 flex flex-col items-center justify-center text-center space-y-2.5 card-inset rounded-lg">
           <p class="text-slate-400 text-xs">Empirical VaR/CVaR distribution will appear after valuation run.</p>
         </div>
-        <div v-show="stochasticData || loading" ref="miniDistChartRef" class="w-full h-64"></div>
+        <div v-show="stochasticData || loading" class="w-full h-64">
+          <BaseChart :option="miniDistOption" :loading="loading" />
+        </div>
       </div>
     </div>
   </div>

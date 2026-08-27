@@ -1,6 +1,6 @@
 <script setup>
-import { ref, watch, onMounted, onUnmounted, nextTick, markRaw } from 'vue'
-import * as echarts from 'echarts'
+import { computed } from 'vue'
+import BaseChart from './BaseChart.vue'
 
 const props = defineProps({
   ifrs17Data: {
@@ -16,13 +16,6 @@ const props = defineProps({
     default: true,
   },
 })
-
-const ifrs17LrcChartRef = ref(null)
-const ifrs17PnlChartRef = ref(null)
-
-let ifrs17LrcChart = null
-let ifrs17PnlChart = null
-let resizeObserver = null
 
 const ACCENT = {
   blue: '#38BDF8',
@@ -54,101 +47,53 @@ function formatCurrency(val) {
   }).format(val)
 }
 
-function getOrCreateChart(domRef) {
-  if (!domRef || domRef.clientWidth === 0 || domRef.clientHeight === 0) return null
-  let chart = echarts.getInstanceByDom(domRef)
-  if (!chart) {
-    chart = markRaw(echarts.init(domRef))
-    if (resizeObserver) {
-      resizeObserver.observe(domRef)
-    }
-  }
-  return chart
-}
+const lrcChartOption = computed(() => {
+  const schedule = props.ifrs17Data?.balance_sheet_schedule
+  if (!schedule || !schedule.length) return null
 
-function renderIFRS17Charts() {
-  if (!props.ifrs17Data) return
+  const durations = schedule.map(d => `t=${d.duration}`)
+  const bels = schedule.map(d => d.bel)
+  const ras = schedule.map(d => d.risk_adjustment)
+  const csms = schedule.map(d => d.csm)
+  const lrcs = schedule.map(d => d.total_lrc)
 
-  if (ifrs17LrcChartRef.value && props.ifrs17Data.balance_sheet_schedule) {
-    ifrs17LrcChart = getOrCreateChart(ifrs17LrcChartRef.value)
-    if (ifrs17LrcChart) {
-      const schedule = props.ifrs17Data.balance_sheet_schedule
-      const durations = schedule.map(d => `t=${d.duration}`)
-      const bels = schedule.map(d => d.bel)
-      const ras = schedule.map(d => d.risk_adjustment)
-      const csms = schedule.map(d => d.csm)
-      const lrcs = schedule.map(d => d.total_lrc)
-
-      ifrs17LrcChart.setOption({
-        backgroundColor: 'transparent',
-        tooltip: { ...chartTooltip, trigger: 'axis' },
-        legend: { data: ['BEL', 'RA', 'CSM', 'Total LRC'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
-        grid: chartGrid,
-        xAxis: { type: 'category', data: durations, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(durations.length / 8)) } },
-        yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: chartSplitLine },
-        series: [
-          { name: 'BEL', type: 'line', stack: 'Total', data: bels, areaStyle: { color: 'rgba(56, 189, 248, 0.25)' }, lineStyle: { width: 1.5, color: ACCENT.blue }, itemStyle: { color: ACCENT.blue }, symbol: 'none' },
-          { name: 'RA', type: 'line', stack: 'Total', data: ras, areaStyle: { color: 'rgba(251, 191, 36, 0.3)' }, lineStyle: { width: 1.5, color: ACCENT.amber }, itemStyle: { color: ACCENT.amber }, symbol: 'none' },
-          { name: 'CSM', type: 'line', stack: 'Total', data: csms, areaStyle: { color: 'rgba(99, 102, 241, 0.3)' }, lineStyle: { width: 1.5, color: ACCENT.indigo }, itemStyle: { color: ACCENT.indigo }, symbol: 'none' },
-          { name: 'Total LRC', type: 'line', data: lrcs, smooth: true, lineStyle: { width: 2, color: ACCENT.white, type: 'dashed' }, itemStyle: { color: ACCENT.white }, symbol: 'none' },
-        ],
-      }, true)
-      ifrs17LrcChart.resize()
-    }
-  }
-
-  if (ifrs17PnlChartRef.value && props.ifrs17Data.income_statement_schedule) {
-    ifrs17PnlChart = getOrCreateChart(ifrs17PnlChartRef.value)
-    if (ifrs17PnlChart) {
-      const pnl = props.ifrs17Data.income_statement_schedule
-      const years = pnl.map(d => `Yr ${d.year + 1}`)
-
-      ifrs17PnlChart.setOption({
-        backgroundColor: 'transparent',
-        tooltip: { ...chartTooltip, trigger: 'axis' },
-        legend: { data: ['Revenue', 'Claims', 'Expenses', 'CSM Release', 'Service Result'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
-        grid: chartGrid,
-        xAxis: { type: 'category', data: years, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(years.length / 8)) } },
-        yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: chartSplitLine },
-        series: [
-          { name: 'Revenue', type: 'bar', data: pnl.map(d => d.insurance_revenue), itemStyle: { color: ACCENT.emerald, borderRadius: [3, 3, 0, 0] } },
-          { name: 'Claims', type: 'bar', data: pnl.map(d => d.claims_incurred), itemStyle: { color: ACCENT.rose, borderRadius: [3, 3, 0, 0] } },
-          { name: 'Expenses', type: 'bar', data: pnl.map(d => d.expenses_incurred), itemStyle: { color: ACCENT.amber, borderRadius: [3, 3, 0, 0] } },
-          { name: 'CSM Release', type: 'line', data: pnl.map(d => d.csm_amortization), smooth: true, lineStyle: { width: 2, color: ACCENT.indigo }, itemStyle: { color: ACCENT.indigo } },
-          { name: 'Service Result', type: 'line', data: pnl.map(d => d.insurance_service_result), smooth: true, lineStyle: { width: 2, color: ACCENT.blue }, itemStyle: { color: ACCENT.blue } },
-        ],
-      }, true)
-      ifrs17PnlChart.resize()
-    }
-  }
-}
-
-watch(
-  () => [props.ifrs17Data, props.isActive],
-  () => {
-    if (props.isActive) {
-      nextTick(renderIFRS17Charts)
-    }
-  },
-  { deep: true }
-)
-
-onMounted(() => {
-  resizeObserver = new ResizeObserver(() => {
-    if (props.isActive) {
-      ifrs17LrcChart?.resize()
-      ifrs17PnlChart?.resize()
-    }
-  })
-  if (props.isActive) {
-    nextTick(renderIFRS17Charts)
+  return {
+    backgroundColor: 'transparent',
+    tooltip: { ...chartTooltip, trigger: 'axis' },
+    legend: { data: ['BEL', 'RA', 'CSM', 'Total LRC'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
+    grid: chartGrid,
+    xAxis: { type: 'category', data: durations, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(durations.length / 8)) } },
+    yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: chartSplitLine },
+    series: [
+      { name: 'BEL', type: 'line', stack: 'Total', data: bels, areaStyle: { color: 'rgba(56, 189, 248, 0.25)' }, lineStyle: { width: 1.5, color: ACCENT.blue }, itemStyle: { color: ACCENT.blue }, symbol: 'none' },
+      { name: 'RA', type: 'line', stack: 'Total', data: ras, areaStyle: { color: 'rgba(251, 191, 36, 0.3)' }, lineStyle: { width: 1.5, color: ACCENT.amber }, itemStyle: { color: ACCENT.amber }, symbol: 'none' },
+      { name: 'CSM', type: 'line', stack: 'Total', data: csms, areaStyle: { color: 'rgba(99, 102, 241, 0.3)' }, lineStyle: { width: 1.5, color: ACCENT.indigo }, itemStyle: { color: ACCENT.indigo }, symbol: 'none' },
+      { name: 'Total LRC', type: 'line', data: lrcs, smooth: true, lineStyle: { width: 2, color: ACCENT.white, type: 'dashed' }, itemStyle: { color: ACCENT.white }, symbol: 'none' },
+    ],
   }
 })
 
-onUnmounted(() => {
-  resizeObserver?.disconnect()
-  ifrs17LrcChart?.dispose()
-  ifrs17PnlChart?.dispose()
+const pnlChartOption = computed(() => {
+  const pnl = props.ifrs17Data?.income_statement_schedule
+  if (!pnl || !pnl.length) return null
+
+  const years = pnl.map(d => `Yr ${d.year + 1}`)
+
+  return {
+    backgroundColor: 'transparent',
+    tooltip: { ...chartTooltip, trigger: 'axis' },
+    legend: { data: ['Revenue', 'Claims', 'Expenses', 'CSM Release', 'Service Result'], textStyle: { color: ACCENT.slate, fontSize: 11 }, top: 0, right: 10 },
+    grid: chartGrid,
+    xAxis: { type: 'category', data: years, axisLine: chartAxisLine, axisLabel: { ...chartAxisLabel, interval: Math.max(1, Math.floor(years.length / 8)) } },
+    yAxis: { type: 'value', axisLabel: { ...chartAxisLabel, formatter: v => `$${(v / 1000).toFixed(0)}k` }, splitLine: chartSplitLine },
+    series: [
+      { name: 'Revenue', type: 'bar', data: pnl.map(d => d.insurance_revenue), itemStyle: { color: ACCENT.emerald, borderRadius: [3, 3, 0, 0] } },
+      { name: 'Claims', type: 'bar', data: pnl.map(d => d.claims_incurred), itemStyle: { color: ACCENT.rose, borderRadius: [3, 3, 0, 0] } },
+      { name: 'Expenses', type: 'bar', data: pnl.map(d => d.expenses_incurred), itemStyle: { color: ACCENT.amber, borderRadius: [3, 3, 0, 0] } },
+      { name: 'CSM Release', type: 'line', data: pnl.map(d => d.csm_amortization), smooth: true, lineStyle: { width: 2, color: ACCENT.indigo }, itemStyle: { color: ACCENT.indigo } },
+      { name: 'Service Result', type: 'line', data: pnl.map(d => d.insurance_service_result), smooth: true, lineStyle: { width: 2, color: ACCENT.blue }, itemStyle: { color: ACCENT.blue } },
+    ],
+  }
 })
 </script>
 
@@ -192,12 +137,16 @@ onUnmounted(() => {
       <div class="card p-5">
         <h3 class="text-sm font-semibold text-white mb-1">LRC Stacked Trajectory</h3>
         <p class="text-[11px] text-slate-500 mb-3">BEL + RA + CSM decomposition</p>
-        <div ref="ifrs17LrcChartRef" class="w-full h-72"></div>
+        <div class="w-full h-72">
+          <BaseChart :option="lrcChartOption" :loading="loading" />
+        </div>
       </div>
       <div class="card p-5">
         <h3 class="text-sm font-semibold text-white mb-1">Insurance Service P&amp;L</h3>
         <p class="text-[11px] text-slate-500 mb-3">Revenue, claims, expenses, CSM release</p>
-        <div ref="ifrs17PnlChartRef" class="w-full h-72"></div>
+        <div class="w-full h-72">
+          <BaseChart :option="pnlChartOption" :loading="loading" />
+        </div>
       </div>
     </div>
 
