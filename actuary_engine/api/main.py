@@ -243,88 +243,92 @@ def evaluate_deterministic(request: DeterministicValuationRequest) -> Determinis
             sum_assured=request.sum_assured,
             premium_paying_term=request.premium_paying_term,
         )
+        contract.validate_against_table(table)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-    interest = InterestAssumption(annual_rate=request.interest_rate)
-    comm = CommutationFunctions(table, interest)
-    prem_calc = LevelPremiumCalculator(comm)
+    try:
+        interest = InterestAssumption(annual_rate=request.interest_rate)
+        comm = CommutationFunctions(table, interest)
+        prem_calc = LevelPremiumCalculator(comm)
 
-    # 1. Net Level Premium Pricing & Equivalence
-    prem_res = prem_calc.price_contract(contract)
-    net_premium = prem_res.annual_premium
-    nsp = prem_res.nsp
-    annuity_factor = prem_res.annuity_factor
+        # 1. Net Level Premium Pricing & Equivalence
+        prem_res = prem_calc.price_contract(contract)
+        net_premium = prem_res.annual_premium
+        nsp = prem_res.nsp
+        annuity_factor = prem_res.annuity_factor
 
-    # 2. Derive gross premium if not explicitly supplied (default 20% loading)
-    gross_premium = request.gross_premium if request.gross_premium is not None else net_premium * 1.20
+        # 2. Derive gross premium if not explicitly supplied (default 20% loading)
+        gross_premium = request.gross_premium if request.gross_premium is not None else net_premium * 1.20
 
-    # 3. Reserve Calculation (Prospective & Retrospective)
-    res_calc = ReserveCalculator(comm)
-    net_res_df = res_calc.reserve_profile(contract, annual_premium=net_premium, method="both")
+        # 3. Reserve Calculation (Prospective & Retrospective)
+        res_calc = ReserveCalculator(comm)
+        net_res_df = res_calc.reserve_profile(contract, annual_premium=net_premium, method="both")
 
-    # 4. Gross Premium Valuation (GPV)
-    expense = request.expense or ExpenseAssumption(
-        percent_of_premium_first=0.35,
-        percent_of_premium_renewal=0.05,
-        per_policy_first=200.0,
-        per_policy_renewal=20.0,
-    )
-    lapse = request.lapse or LapseAssumption(flat_annual_rate=0.03)
+        # 4. Gross Premium Valuation (GPV)
+        expense = request.expense or ExpenseAssumption(
+            percent_of_premium_first=0.35,
+            percent_of_premium_renewal=0.05,
+            per_policy_first=200.0,
+            per_policy_renewal=20.0,
+        )
+        lapse = request.lapse or LapseAssumption(flat_annual_rate=0.03)
 
-    gpv_engine = GrossPremiumValuation(
-        table=table,
-        interest=interest,
-        expense=expense,
-        lapse=lapse,
-    )
+        gpv_engine = GrossPremiumValuation(
+            table=table,
+            interest=interest,
+            expense=expense,
+            lapse=lapse,
+        )
 
-    gpv_cf_df = gpv_engine.project(contract, gross_premium=gross_premium)
-    bel = gpv_engine.best_estimate_liability(contract, gross_premium=gross_premium)
-    gpv_res_df = gpv_engine.gross_reserve_profile(contract, gross_premium=gross_premium)
+        gpv_cf_df = gpv_engine.project(contract, gross_premium=gross_premium)
+        bel = gpv_engine.best_estimate_liability(contract, gross_premium=gross_premium)
+        gpv_res_df = gpv_engine.gross_reserve_profile(contract, gross_premium=gross_premium)
 
-    # Merge reserve trajectories into JSON-friendly format
-    merged_res = net_res_df.merge(gpv_res_df[["duration", "gross_reserve"]], on="duration", how="left")
-    reserve_profile_data = []
-    for _, row in merged_res.iterrows():
-        reserve_profile_data.append({
-            "duration": int(row["duration"]),
-            "age": int(row["age"]),
-            "reserve_prospective": round(float(row["reserve_prospective"]), 2),
-            "reserve_retrospective": round(float(row["reserve_retrospective"]), 2),
-            "gross_reserve": round(float(row.get("gross_reserve", 0.0)), 2),
-        })
+        # Merge reserve trajectories into JSON-friendly format
+        merged_res = net_res_df.merge(gpv_res_df[["duration", "gross_reserve"]], on="duration", how="left")
+        reserve_profile_data = []
+        for _, row in merged_res.iterrows():
+            reserve_profile_data.append({
+                "duration": int(row["duration"]),
+                "age": int(row["age"]),
+                "reserve_prospective": round(float(row["reserve_prospective"]), 2),
+                "reserve_retrospective": round(float(row["reserve_retrospective"]), 2),
+                "gross_reserve": round(float(row.get("gross_reserve", 0.0)), 2),
+            })
 
-    # Prepare cash flow breakdown
-    cash_flows = []
-    for _, row in gpv_cf_df.iterrows():
-        cash_flows.append({
-            "year": int(row["year"]),
-            "age": int(row["age"]),
-            "inforce_boy": round(float(row["inforce_boy"]), 6),
-            "premium_income": round(float(row["premium_income"]), 2),
-            "death_claims": round(float(row["death_claims"]), 2),
-            "maturity_benefit": round(float(row["maturity_benefit"]), 2),
-            "total_expense": round(float(row["total_expense"]), 2),
-            "net_liability_cf": round(float(row["net_liability_cf"]), 2),
-            "pv_net_liability": round(float(row["pv_net_liability"]), 2),
-        })
+        # Prepare cash flow breakdown
+        cash_flows = []
+        for _, row in gpv_cf_df.iterrows():
+            cash_flows.append({
+                "year": int(row["year"]),
+                "age": int(row["age"]),
+                "inforce_boy": round(float(row["inforce_boy"]), 6),
+                "premium_income": round(float(row["premium_income"]), 2),
+                "death_claims": round(float(row["death_claims"]), 2),
+                "maturity_benefit": round(float(row["maturity_benefit"]), 2),
+                "total_expense": round(float(row["total_expense"]), 2),
+                "net_liability_cf": round(float(row["net_liability_cf"]), 2),
+                "pv_net_liability": round(float(row["pv_net_liability"]), 2),
+            })
 
-    return DeterministicValuationResponse(
-        product_type=contract.product_type.value,
-        issue_age=contract.issue_age,
-        term=contract.term,
-        sum_assured=contract.sum_assured,
-        annual_net_premium=round(net_premium, 2),
-        annual_gross_premium=round(gross_premium, 2),
-        nsp=round(nsp, 2),
-        annuity_factor=round(annuity_factor, 4),
-        bel=round(bel, 2),
-        table_id=request.table_id or "soa_ilt",
-        table_name=table.name,
-        reserve_profile=reserve_profile_data,
-        cash_flows=cash_flows,
-    )
+        return DeterministicValuationResponse(
+            product_type=contract.product_type.value,
+            issue_age=contract.issue_age,
+            term=contract.term,
+            sum_assured=contract.sum_assured,
+            annual_net_premium=round(net_premium, 2),
+            annual_gross_premium=round(gross_premium, 2),
+            nsp=round(nsp, 2),
+            annuity_factor=round(annuity_factor, 4),
+            bel=round(bel, 2),
+            table_id=request.table_id or "soa_ilt",
+            table_name=table.name,
+            reserve_profile=reserve_profile_data,
+            cash_flows=cash_flows,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
 
 async def _compute_stochastic_valuation_core(
@@ -503,14 +507,15 @@ async def start_async_simulation(
 ) -> AsyncJobCreateResponse:
     """Enqueue a large-scale stochastic Monte Carlo simulation in the background."""
     try:
-        _ = table_registry.get_table(request.table_id or "soa_ilt")
-        _ = PolicyContract(
+        table = table_registry.get_table(request.table_id or "soa_ilt")
+        contract = PolicyContract(
             product_type=request.product_type,
             issue_age=request.issue_age,
             term=request.term,
             sum_assured=request.sum_assured,
             premium_paying_term=request.premium_paying_term,
         )
+        contract.validate_against_table(table)
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
     except ValueError as e:
@@ -816,6 +821,7 @@ def evaluate_ifrs17(request: IFRS17ValuationRequest) -> IFRS17ValuationResponse:
             sum_assured=request.sum_assured,
             premium_paying_term=request.premium_paying_term,
         )
+        contract.validate_against_table(table)
         interest = InterestAssumption(annual_rate=request.interest_rate)
         expense = request.expense or ExpenseAssumption()
         lapse = request.lapse or LapseAssumption()
@@ -997,6 +1003,7 @@ def evaluate_sensitivity_tornado(request: SensitivityRequest) -> SensitivityResp
             sum_assured=request.sum_assured,
             premium_paying_term=request.premium_paying_term,
         )
+        contract.validate_against_table(table)
         interest = InterestAssumption(annual_rate=request.interest_rate)
         expense = request.expense or ExpenseAssumption()
         lapse = request.lapse or LapseAssumption()
@@ -1055,6 +1062,7 @@ def evaluate_stress_test_sliders(request: StressTestRequest) -> StressTestRespon
             sum_assured=sum_assured,
             premium_paying_term=prem_term,
         )
+        contract.validate_against_table(table)
         interest = InterestAssumption(annual_rate=interest_rate)
         expense = request.expense or ExpenseAssumption()
         lapse = request.lapse or LapseAssumption()

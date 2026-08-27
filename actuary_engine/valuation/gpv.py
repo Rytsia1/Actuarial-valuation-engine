@@ -107,6 +107,8 @@ class GrossPremiumValuation:
         Returns:
             DataFrame with detailed cash flow projections.
         """
+        contract.validate_against_table(self.table)
+
         x = contract.issue_age
         face = contract.sum_assured
         v = self.interest.discount_factor

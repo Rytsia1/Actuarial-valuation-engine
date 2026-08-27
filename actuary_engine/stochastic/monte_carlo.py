@@ -155,6 +155,8 @@ class StochasticValuationEngine:
         Returns:
             Tuple of (scenario_bel_array of shape (n_batch,), short_rates_matrix of shape (n_batch, n+1))
         """
+        contract.validate_against_table(self.table)
+
         x = contract.issue_age
         face = contract.sum_assured
         ptype = contract.product_type

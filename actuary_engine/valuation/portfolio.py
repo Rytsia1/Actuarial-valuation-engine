@@ -158,6 +158,46 @@ class PortfolioValuationEngine:
             dtype=np.int64,
         )
 
+        # Validate ages and terms against the mortality table (the source of truth)
+        min_age = self.table.min_age
+        max_age = self.table.max_age
+        table_name = self.table.name
+
+        under_age_mask = issue_age_arr < min_age
+        if under_age_mask.any():
+            bad_row = df[under_age_mask].iloc[0]
+            raise ValueError(
+                f"Policy '{bad_row['policy_id']}': issue age ({bad_row['issue_age']}) is below "
+                f"mortality table minimum age {min_age} ({table_name})."
+            )
+
+        over_age_mask = issue_age_arr > max_age
+        if over_age_mask.any():
+            bad_row = df[over_age_mask].iloc[0]
+            raise ValueError(
+                f"Policy '{bad_row['policy_id']}': issue age ({bad_row['issue_age']}) exceeds "
+                f"mortality table maximum age {max_age} ({table_name})."
+            )
+
+        attained_over_mask = (issue_age_arr + pol_dur_arr) > max_age
+        if attained_over_mask.any():
+            bad_row = df[attained_over_mask].iloc[0]
+            raise ValueError(
+                f"Policy '{bad_row['policy_id']}': attained age ({bad_row['issue_age'] + bad_row['policy_duration_years']}) "
+                f"exceeds mortality table maximum age {max_age} ({table_name})."
+            )
+
+        # For finite term products, validate maturity horizon does not exceed table.max_age
+        non_whole_life = df["product_type"] != "whole_life"
+        exceed_term_mask = non_whole_life & ((issue_age_arr + term_years_arr) > max_age)
+        if exceed_term_mask.any():
+            bad_row = df[exceed_term_mask].iloc[0]
+            raise ValueError(
+                f"Policy '{bad_row['policy_id']}': issue_age ({bad_row['issue_age']}) + term ({bad_row['term_years']}) = "
+                f"{bad_row['issue_age'] + bad_row['term_years']} exceeds mortality table maximum age "
+                f"(omega) of {max_age} ({table_name})."
+            )
+
         return df
 
     def evaluate_portfolio(self, df: pd.DataFrame) -> tuple[pd.DataFrame, PortfolioSummary]:

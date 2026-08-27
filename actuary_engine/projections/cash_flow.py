@@ -83,12 +83,21 @@ class CashFlowProjector:
         Returns:
             DataFrame with projected cash flows.
         """
+        contract.validate_against_table(self.table)
+
         x = contract.issue_age
         face = contract.sum_assured
         v = self.interest.discount_factor
 
         # Determine projection horizon
         if projection_years is not None:
+            if projection_years <= 0:
+                raise ValueError(f"projection_years must be positive. Got {projection_years}.")
+            if x + projection_years > self.table.max_age:
+                raise ValueError(
+                    f"Projection horizon {x} + {projection_years} = {x + projection_years} "
+                    f"exceeds mortality table maximum age {self.table.max_age} ({self.table.name})."
+                )
             n = projection_years
         elif contract.term is not None:
             n = contract.term

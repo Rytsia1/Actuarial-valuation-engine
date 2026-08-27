@@ -127,6 +127,8 @@ class IFRS17Engine:
         Returns:
             IFRS17InitialBalance with BEL, RA, CSM, Loss Component, and cohort profitability classification.
         """
+        contract.validate_against_table(self.table)
+
         gpv = GrossPremiumValuation(
             table=self.table,
             interest=self.interest,

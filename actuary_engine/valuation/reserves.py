@@ -249,6 +249,8 @@ class ReserveCalculator:
             - reserve_prospective: ₜV (prospective), if requested.
             - reserve_retrospective: ₜV (retrospective), if requested.
         """
+        contract.validate_against_table(self.commutation.table)
+
         x = contract.issue_age
         n = contract.term
         face = contract.sum_assured

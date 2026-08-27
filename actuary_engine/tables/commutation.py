@@ -241,6 +241,17 @@ class CommutationFunctions:
     # Validation
     # ────────────────────────────────────────────────────────────
 
+    def _validate_age(self, x: int) -> None:
+        """Validate that age x is within the table range."""
+        if x < self._min_age:
+            raise ValueError(
+                f"Age {x} is below table minimum {self._min_age} ({self.table.name})."
+            )
+        if x > self._max_age:
+            raise ValueError(
+                f"Age {x} exceeds table maximum {self._max_age} ({self.table.name})."
+            )
+
     def _validate_term(self, x: int, n: int) -> None:
         """Validate that age x + n is within the table range.
 
@@ -253,9 +264,10 @@ class CommutationFunctions:
         """
         if n <= 0:
             raise ValueError(f"Term n must be positive. Got {n}.")
+        self._validate_age(x)
         if x + n > self._max_age:
             raise ValueError(
-                f"Age x + n = {x + n} exceeds table maximum {self._max_age}."
+                f"Age x + n = {x + n} exceeds table maximum {self._max_age} ({self.table.name})."
             )
 
     def __repr__(self) -> str:

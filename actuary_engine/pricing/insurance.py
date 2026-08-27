@@ -111,6 +111,8 @@ class InsurancePricer:
         Raises:
             ValueError: If the product type is unsupported.
         """
+        contract.validate_against_table(self.commutation.table)
+
         x = contract.issue_age
         face = contract.sum_assured
         n = contract.term

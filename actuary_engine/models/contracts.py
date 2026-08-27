@@ -53,7 +53,6 @@ class PolicyContract(BaseModel):
     issue_age: int = Field(
         ...,
         ge=0,
-        le=120,
         description="Age at policy issue (x).",
     )
     term: Optional[int] = Field(
@@ -78,13 +77,14 @@ class PolicyContract(BaseModel):
 
     @model_validator(mode="after")
     def validate_contract(self) -> "PolicyContract":
-        """Validate contract consistency.
+        """Validate structural contract consistency.
 
-        Rules:
+        Structural Rules:
         - Whole life products must not have a finite term.
-        - Non-whole-life products must have a term.
-        - Premium paying term must not exceed coverage term.
-        - Issue age + term must not exceed a reasonable limit (130).
+        - Non-whole-life products must have a positive term.
+        - Premium paying term must not exceed coverage term if finite term is specified.
+        Note: Exact maximum age limits (omega) are governed by the MortalityTable
+        used for pricing/valuation via `validate_against_table(table)`.
         """
         if self.product_type == ProductType.WHOLE_LIFE:
             if self.term is not None:
@@ -97,21 +97,64 @@ class PolicyContract(BaseModel):
                 raise ValueError(
                     f"{self.product_type.value} products require a finite term."
                 )
-            if self.issue_age + self.term > 130:
-                raise ValueError(
-                    f"Issue age ({self.issue_age}) + term ({self.term}) = "
-                    f"{self.issue_age + self.term} exceeds maximum age limit of 130."
-                )
 
-        if self.premium_paying_term is not None:
-            effective_term = self.term if self.term is not None else 130 - self.issue_age
-            if self.premium_paying_term > effective_term:
+        if self.term is not None and self.premium_paying_term is not None:
+            if self.premium_paying_term > self.term:
                 raise ValueError(
                     f"Premium paying term ({self.premium_paying_term}) cannot exceed "
-                    f"coverage term ({effective_term})."
+                    f"coverage term ({self.term})."
                 )
 
         return self
+
+    def validate_against_table(self, table: Any) -> None:
+        """Validate that contract parameters conform to the mortality table's boundaries.
+
+        The mortality table is the source of truth for maximum age (omega) and minimum age:
+        - Issue age must be within [table.min_age, table.max_age].
+        - For finite-term products, issue_age + term must not exceed table.max_age.
+        - Premium paying term (if specified) must not exceed remaining years to table.max_age.
+
+        Args:
+            table: MortalityTable instance (or object with min_age, max_age, name).
+
+        Raises:
+            ValueError: If issue age or term exceeds the mortality table limits.
+        """
+        min_age = int(table.min_age)
+        max_age = int(table.max_age)
+        table_name = getattr(table, "name", "MortalityTable")
+
+        if self.issue_age < min_age:
+            raise ValueError(
+                f"Issue age ({self.issue_age}) is below the mortality table minimum age "
+                f"of {min_age} ({table_name})."
+            )
+        if self.issue_age > max_age:
+            raise ValueError(
+                f"Issue age ({self.issue_age}) exceeds the mortality table maximum age "
+                f"(omega) of {max_age} ({table_name})."
+            )
+
+        max_available_term = max_age - self.issue_age
+
+        if self.product_type != ProductType.WHOLE_LIFE:
+            if self.term is not None and self.issue_age + self.term > max_age:
+                raise ValueError(
+                    f"Issue age ({self.issue_age}) + term ({self.term}) = "
+                    f"{self.issue_age + self.term} exceeds mortality table maximum age "
+                    f"(omega) of {max_age} ({table_name}). Maximum allowable term for "
+                    f"issue age {self.issue_age} is {max_available_term} years."
+                )
+
+        if self.premium_paying_term is not None:
+            effective_coverage = self.term if self.term is not None else max_available_term
+            if self.premium_paying_term > effective_coverage:
+                raise ValueError(
+                    f"Premium paying term ({self.premium_paying_term}) exceeds "
+                    f"maximum allowable duration ({effective_coverage}) under mortality table "
+                    f"{table_name} (omega={max_age})."
+                )
 
     @property
     def effective_premium_term(self) -> Optional[int]:

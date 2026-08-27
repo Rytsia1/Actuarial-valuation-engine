@@ -121,6 +121,11 @@ class ContractGraphSimulator:
         else:
             table = base_table
 
+        if age < table.min_age:
+            raise ValueError(f"Issue age ({age}) is below mortality table minimum age of {table.min_age} ({table.name}).")
+        if age + term > table.max_age:
+            raise ValueError(f"Age ({age}) + term ({term}) = {age + term} exceeds mortality table maximum age of {table.max_age} ({table.name}).")
+
         # 4. Outflow / Benefit Configuration
         death_benefit_factor = 1.0
         maturity_benefit_factor = 0.0

@@ -173,6 +173,8 @@ class SensitivityEngine:
         Returns:
             Dictionary containing 'reserve', 'pvfb', 'pvfe', 'pvfp', 'annual_net_premium', 'gross_premium'.
         """
+        contract.validate_against_table(self.table)
+
         base_rate = getattr(self.interest, "annual_rate", 0.05)
         shocked_rate = max(0.0001, base_rate + interest_shift)
         shocked_interest = InterestAssumption(annual_rate=shocked_rate)

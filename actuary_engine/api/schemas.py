@@ -55,7 +55,7 @@ class DeterministicValuationRequest(BaseModel):
     product_type: ProductType = Field(
         default=ProductType.ENDOWMENT, description="Insurance product type."
     )
-    issue_age: int = Field(default=30, ge=0, le=105, description="Policyholder issue age.")
+    issue_age: int = Field(default=30, ge=0, description="Policyholder issue age.")
     term: Optional[int] = Field(default=20, gt=0, description="Coverage term in years.")
     sum_assured: float = Field(default=1_000_000.0, gt=0.0, description="Sum assured / Face amount.")
     premium_paying_term: Optional[int] = Field(default=None, gt=0, description="Premium paying term.")
@@ -96,7 +96,7 @@ class StochasticValuationRequest(BaseModel):
     product_type: ProductType = Field(
         default=ProductType.ENDOWMENT, description="Insurance product type."
     )
-    issue_age: int = Field(default=30, ge=0, le=105, description="Policyholder issue age.")
+    issue_age: int = Field(default=30, ge=0, description="Policyholder issue age.")
     term: Optional[int] = Field(default=20, gt=0, description="Coverage term in years.")
     sum_assured: float = Field(default=1_000_000.0, gt=0.0, description="Sum assured / Face amount.")
     premium_paying_term: Optional[int] = Field(default=None, gt=0, description="Premium paying term.")
@@ -197,7 +197,7 @@ class PortfolioPolicyRecord(BaseModel):
     """Individual policy input item for JSON portfolio batch requests."""
 
     policy_id: Optional[str] = Field(default=None, description="Unique policy identifier.")
-    issue_age: int = Field(..., ge=0, le=105, description="Issue age.")
+    issue_age: int = Field(..., ge=0, description="Issue age.")
     term_years: Optional[int] = Field(default=20, ge=1, description="Policy term in years.")
     sum_assured: float = Field(..., gt=0.0, description="Sum assured / Face amount.")
     gross_premium: float = Field(..., gt=0.0, description="Annual gross premium.")
@@ -264,8 +264,8 @@ class IFRS17ValuationRequest(BaseModel):
     """Request payload for IFRS 17 / PSAK 117 General Measurement Model (BBA) valuation."""
 
     product_type: str = Field(default="endowment", description="Product line (term, endowment, whole_life, pure_endowment).")
-    issue_age: int = Field(default=35, ge=0, le=100, description="Age at policy issuance.")
-    term: Optional[int] = Field(default=20, ge=1, le=80, description="Policy coverage term in years.")
+    issue_age: int = Field(default=35, ge=0, description="Age at policy issuance.")
+    term: Optional[int] = Field(default=20, ge=1, description="Policy coverage term in years.")
     sum_assured: float = Field(default=500000.0, gt=0.0, description="Sum assured / Face amount.")
     premium_paying_term: Optional[int] = Field(default=None, ge=1, description="Premium payment duration.")
     interest_rate: float = Field(default=0.05, gt=0.0, le=0.50, description="Locked-in valuation discount rate.")
@@ -349,8 +349,8 @@ class SensitivityRequest(BaseModel):
     """Request payload for multi-factor sensitivity and Tornado analysis."""
 
     product_type: str = Field(default="endowment", description="Product line (term, endowment, whole_life, pure_endowment).")
-    issue_age: int = Field(default=35, ge=0, le=100, description="Age at policy issuance.")
-    term: Optional[int] = Field(default=20, ge=1, le=80, description="Policy coverage term in years.")
+    issue_age: int = Field(default=35, ge=0, description="Age at policy issuance.")
+    term: Optional[int] = Field(default=20, ge=1, description="Policy coverage term in years.")
     sum_assured: float = Field(default=500000.0, gt=0.0, description="Sum assured / Face amount.")
     premium_paying_term: Optional[int] = Field(default=None, ge=1, description="Premium payment duration.")
     interest_rate: float = Field(default=0.05, gt=0.0, le=0.50, description="Baseline valuation discount rate.")
@@ -404,8 +404,8 @@ class StressTestRequest(BaseModel):
 
     contract_id: Optional[str] = Field(default=None, description="Optional contract identifier.")
     product_type: str = Field(default="endowment", description="Product line (term, endowment, whole_life, pure_endowment).")
-    issue_age: int = Field(default=30, ge=0, le=100, description="Age at policy issuance.")
-    term: Optional[int] = Field(default=20, ge=1, le=80, description="Policy coverage term in years.")
+    issue_age: int = Field(default=30, ge=0, description="Age at policy issuance.")
+    term: Optional[int] = Field(default=20, ge=1, description="Policy coverage term in years.")
     sum_assured: float = Field(default=1_000_000.0, gt=0.0, description="Sum assured / Face amount.")
     premium_paying_term: Optional[int] = Field(default=None, ge=1, description="Premium payment duration.")
     interest_rate: float = Field(default=0.05, gt=0.0, le=0.50, description="Baseline valuation discount rate.")

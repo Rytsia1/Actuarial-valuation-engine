@@ -379,6 +379,19 @@ class MortalityTable:
         ages = np.arange(start_age, start_age + len(qx_arr), dtype=np.int64)
         return cls(ages=ages, qx=qx_arr, name=name, radix=radix)
 
+    def validate_contract(self, contract: Any) -> None:
+        """Validate that a PolicyContract satisfies this mortality table's age limits.
+
+        Ensures the mortality table is the source of truth for maximum and minimum age.
+
+        Args:
+            contract: PolicyContract instance to validate.
+
+        Raises:
+            ValueError: If the contract's issue age or term exceeds this table's boundaries.
+        """
+        contract.validate_against_table(self)
+
     def __repr__(self) -> str:
         return (
             f"MortalityTable(name='{self.name}', ages=[{self.min_age}..{self.max_age}], "
