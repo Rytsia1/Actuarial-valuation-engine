@@ -111,6 +111,7 @@ class ContractGraphSimulator:
         # Adjust mortality table if multiplier is non-1.0
         if mortality_mult != 1.0:
             qx_shocked = np.clip(base_table.qx * mortality_mult, 0.0, 1.0)
+            qx_shocked[:-1] = np.minimum(qx_shocked[:-1], 0.9999)
             qx_shocked[-1] = 1.0
             table = MortalityTable(
                 ages=base_table.ages,

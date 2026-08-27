@@ -36,9 +36,41 @@ class TestMortalityTableLoading:
         assert table.num_ages == 5
         assert table.get_qx(60) == pytest.approx(0.01)
 
+    def test_missing_limiting_age_raises(self) -> None:
+        """Table ending with qx < 1.0 violates limiting age closure invariant and raises ValueError."""
+        qx = [0.01, 0.02, 0.05, 0.10, 0.40]  # qx[max_age] = 0.40 != 1.0
+        with pytest.raises(ValueError, match="Limiting age must have qx = 1.0"):
+            MortalityTable.from_qx_array(qx, start_age=60)
+
+    def test_premature_limiting_age_raises(self) -> None:
+        """qx = 1.0 before the final limiting age violates pre-omega survivorship invariant."""
+        qx = [0.01, 1.0, 0.05, 1.0]
+        with pytest.raises(ValueError, match="prior to the limiting age omega"):
+            MortalityTable.from_qx_array(qx, start_age=40)
+
+    def test_negative_min_age_raises(self) -> None:
+        """Negative starting age raises ValueError."""
+        with pytest.raises(ValueError, match="non-negative"):
+            MortalityTable.from_qx_array([0.1, 1.0], start_age=-5)
+
+    def test_non_contiguous_ages_raises(self) -> None:
+        """Gaps in ages array raise ValueError."""
+        with pytest.raises(ValueError, match="contiguous integers"):
+            MortalityTable(ages=np.array([0, 1, 3]), qx=np.array([0.1, 0.2, 1.0]))
+
+    def test_invalid_radix_raises(self) -> None:
+        """Zero or negative radix raises ValueError."""
+        with pytest.raises(ValueError, match="positive integer"):
+            MortalityTable.from_qx_array([0.1, 1.0], radix=0)
+
+    def test_nan_qx_raises(self) -> None:
+        """NaN or Inf in qx raises ValueError."""
+        with pytest.raises(ValueError, match="NaN or Inf"):
+            MortalityTable.from_qx_array([0.1, np.nan, 1.0])
+
     def test_invalid_qx_raises(self) -> None:
         """qx values outside [0, 1] raise ValueError."""
-        with pytest.raises(ValueError, match="qx values must be in"):
+        with pytest.raises(ValueError, match="All qx values must be in"):
             MortalityTable.from_qx_array([0.5, -0.1, 1.0])
 
     def test_mismatched_lengths_raises(self) -> None:

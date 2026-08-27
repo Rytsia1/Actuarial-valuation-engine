@@ -159,7 +159,10 @@ def parse_csv_mortality_table(
     if qx[-1] < 1.0:
         qx[-1] = 1.0
 
-    return MortalityTable(ages=ages, qx=qx, name=name, radix=radix)
+    try:
+        return MortalityTable(ages=ages, qx=qx, name=name, radix=radix)
+    except ValueError as e:
+        raise TableParsingError(str(e)) from e
 
 
 def parse_xtbml_mortality_table(
@@ -247,7 +250,10 @@ def parse_xtbml_mortality_table(
     if qx[-1] < 1.0:
         qx[-1] = 1.0
 
-    return MortalityTable(ages=ages, qx=qx, name=final_name, radix=radix)
+    try:
+        return MortalityTable(ages=ages, qx=qx, name=final_name, radix=radix)
+    except ValueError as e:
+        raise TableParsingError(str(e)) from e
 
 
 def parse_mortality_file(

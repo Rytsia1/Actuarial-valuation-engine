@@ -182,6 +182,7 @@ class SensitivityEngine:
         # 1. Mortality Shock Table
         if mortality_mult != 1.0 or mortality_add != 0.0:
             qx_shocked = np.clip(self.table.qx * mortality_mult + mortality_add, 0.0, 1.0)
+            qx_shocked[:-1] = np.minimum(qx_shocked[:-1], 0.9999)
             qx_shocked[-1] = 1.0  # Terminal closure
             shocked_table = MortalityTable(
                 ages=self.table.ages,
@@ -563,6 +564,7 @@ class SensitivityEngine:
 
         if mort_mult != 1.0:
             qx_shocked = np.clip(self.table.qx * mort_mult, 0.0, 1.0)
+            qx_shocked[:-1] = np.minimum(qx_shocked[:-1], 0.9999)
             qx_shocked[-1] = 1.0
             shocked_table = MortalityTable(
                 ages=self.table.ages,

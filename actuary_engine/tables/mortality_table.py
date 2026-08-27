@@ -63,7 +63,7 @@ class MortalityTable:
         Raises:
             ValueError: If input arrays are inconsistent or contain invalid values.
         """
-        self._validate_inputs(ages, qx)
+        self._validate_inputs(ages, qx, radix)
 
         self.name = name
         self._ages = ages.astype(np.int64)
@@ -85,15 +85,26 @@ class MortalityTable:
         self.dx = self.lx[:-1] * self.qx
 
     @staticmethod
-    def _validate_inputs(ages: np.ndarray, qx: np.ndarray) -> None:
-        """Validate input arrays for consistency.
+    def _validate_inputs(ages: np.ndarray, qx: np.ndarray, radix: int = _DEFAULT_RADIX) -> None:
+        """Validate input arrays and fundamental mortality table invariants.
+
+        Invariants enforced at table creation:
+        1. Dimensionality: `ages` and `qx` must be 1-dimensional arrays.
+        2. Equal Length: `len(ages) == len(qx)`.
+        3. Minimum Size: `len(ages) >= 2`.
+        4. Contiguity & Bounds: `ages` must be contiguous integers with min_age >= 0.
+        5. Probability Bounds: All `qx` values must satisfy 0 <= qx <= 1 with no NaN or Inf.
+        6. Limiting Age Closure (Omega): `qx[-1] == 1.0` at the terminal age (omega).
+        7. Pre-Omega Survivorship: `qx[x] < 1.0` for all ages prior to omega.
+        8. Radix: `radix > 0`.
 
         Args:
             ages: Array of ages.
             qx: Array of mortality rates.
+            radix: Initial cohort size.
 
         Raises:
-            ValueError: On invalid or inconsistent inputs.
+            ValueError: On invalid inputs or invariant violations.
         """
         if ages.ndim != 1 or qx.ndim != 1:
             raise ValueError("ages and qx must be 1-dimensional arrays.")
@@ -104,15 +115,45 @@ class MortalityTable:
             )
         if len(ages) < 2:
             raise ValueError("Mortality table must have at least 2 ages.")
+
+        if np.any(np.isnan(qx)) or np.any(np.isinf(qx)):
+            raise ValueError("Mortality table qx array contains NaN or Inf values.")
+
         if np.any(qx < 0.0) or np.any(qx > 1.0):
             raise ValueError("All qx values must be in [0, 1].")
 
-        # Check ages are contiguous
-        expected_ages = np.arange(ages[0], ages[0] + len(ages))
+        min_age = int(ages[0])
+        max_age = int(ages[-1])
+
+        if min_age < 0:
+            raise ValueError(f"Minimum age must be non-negative. Got {min_age}.")
+
+        # Check ages are contiguous integers
+        expected_ages = np.arange(min_age, min_age + len(ages), dtype=np.int64)
         if not np.array_equal(ages, expected_ages):
             raise ValueError(
-                "Ages must be contiguous integers (e.g., 0, 1, 2, ..., ω)."
+                f"Ages must be contiguous integers (e.g., {min_age}, {min_age+1}, ..., {max_age})."
             )
+
+        # Limiting age closure invariant: qx at omega must equal 1.0
+        if not np.isclose(float(qx[-1]), 1.0, atol=1e-6):
+            raise ValueError(
+                f"Mortality table invariant violated: table ends at age {max_age} (omega), "
+                f"but qx[{max_age}] = {float(qx[-1]):.6f} ≠ 1.0. Limiting age must have qx = 1.0 "
+                f"to guarantee cohort closure."
+            )
+
+        # Pre-omega survivorship invariant: qx before omega must be strictly < 1.0
+        if np.any(qx[:-1] >= 1.0):
+            premature_idx = int(np.where(qx[:-1] >= 1.0)[0][0])
+            premature_age = int(ages[premature_idx])
+            raise ValueError(
+                f"Mortality table invariant violated: qx[{premature_age}] = {float(qx[premature_idx])} >= 1.0 "
+                f"prior to the limiting age omega ({max_age}). An earlier limiting age creates dead-end cohorts."
+            )
+
+        if radix <= 0:
+            raise ValueError(f"Radix must be a positive integer. Got {radix}.")
 
     @property
     def omega(self) -> int:
