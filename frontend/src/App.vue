@@ -26,7 +26,10 @@ import SensitivityDashboard from './components/SensitivityDashboard.vue'
 import PortfolioDashboard from './components/PortfolioDashboard.vue'
 import CashFlowTable from './components/CashFlowTable.vue'
 import ContractBuilderView from './views/ContractBuilderView.vue'
+import CommandPalette from './components/CommandPalette.vue'
+import RunHistoryModal from './components/RunHistoryModal.vue'
 import { createRequestState } from './utils/useAsyncState'
+import { exportValuationCSV } from './utils/export.js'
 
 // ────────────────────────────────────────────────────────────
 // Reactive Dashboard State & Request State Machines
@@ -37,6 +40,10 @@ const backendStatus = ref('checking')
 const backendDetails = ref(null)
 const sidebarOpen = ref(false)
 const lastRunTime = ref(null)
+
+const showCommandPalette = ref(false)
+const showHistoryModal = ref(false)
+const runHistory = ref([])
 
 // Individual Request States (loading, error, data lifecycle)
 const detState = createRequestState()
@@ -387,7 +394,16 @@ async function executeValuation() {
     })
 
   await Promise.allSettled([ifrs17Task, sensTask, stochTask])
-  lastRunTime.value = new Date().toLocaleTimeString('en-US', { hour12: false })
+  const ts = new Date().toLocaleTimeString('en-US', { hour12: false })
+  lastRunTime.value = ts
+  
+  runHistory.value.unshift({
+    timestamp: ts,
+    product: form.product_type,
+    age: form.issue_age,
+    term: form.term,
+    bel: stochState.data.value?.mean_bel ?? detState.data.value?.bel
+  })
 }
 
 // On-demand lazy loader for tabs
@@ -533,7 +549,38 @@ async function runSamplePortfolioDemo(nPolicies = 1000) {
 // Lifecycle Hooks
 // ────────────────────────────────────────────────────────────
 
+function handleGlobalKeydown(e) {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+    e.preventDefault()
+    showCommandPalette.value = true
+  }
+}
+
+function handleCommandPaletteAction(actionId) {
+  switch (actionId) {
+    case 'run_valuation':
+      executeValuation()
+      break
+    case 'export_csv':
+      exportValuationCSV(detState.data.value, form)
+      break
+    case 'upload_table':
+      showTableModal.value = true
+      break
+    case 'view_history':
+      showHistoryModal.value = true
+      break
+    case 'tab_overview':
+      switchTab('overview')
+      break
+    case 'tab_sensitivity':
+      switchTab('sensitivity')
+      break
+  }
+}
+
 onMounted(async () => {
+  window.addEventListener('keydown', handleGlobalKeydown)
   const isConnected = await checkBackendConnection()
   if (isConnected) {
     // Only execute the ultra-fast deterministic baseline on initial app launch (<10ms)
@@ -543,6 +590,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  window.removeEventListener('keydown', handleGlobalKeydown)
   if (activeSocketConnection) {
     activeSocketConnection.close()
     activeSocketConnection = null
@@ -638,12 +686,12 @@ onUnmounted(() => {
 
         <!-- Search Bar -->
         <div class="hidden sm:flex items-center flex-1 max-w-md">
-          <div class="relative w-full">
-            <svg class="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <div class="relative w-full cursor-pointer group" @click="showCommandPalette = true" role="button">
+            <svg class="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500 group-hover:text-sky-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
               <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
             </svg>
-            <input type="text" placeholder="Search policies, tables, runs..." class="input-field pl-9 pr-14 py-2 text-[13px]" readonly />
-            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded font-mono">⌘K</span>
+            <input type="text" placeholder="⌘K Quick Actions" class="input-field pl-9 pr-14 py-2 text-[13px] cursor-pointer group-hover:border-sky-500/50 transition-colors" readonly />
+            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded font-mono group-hover:text-sky-300">⌘K</span>
           </div>
         </div>
 
@@ -952,5 +1000,9 @@ onUnmounted(() => {
         </div>
       </footer>
     </div>
+    
+    <!-- Modals -->
+    <CommandPalette v-model="showCommandPalette" @action="handleCommandPaletteAction" />
+    <RunHistoryModal v-model="showHistoryModal" :history="runHistory" />
   </div>
 </template>

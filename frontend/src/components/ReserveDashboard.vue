@@ -62,12 +62,38 @@ const reserveChartOption = computed(() => {
 
   return {
     backgroundColor: 'transparent',
-    tooltip: { ...chartTooltip, trigger: 'axis' },
+    tooltip: { 
+      ...chartTooltip, 
+      trigger: 'axis',
+      formatter: (params) => {
+        let result = `<div class="font-mono text-[11px] mb-1">Year: ${params[0].axisValue.replace('t=', '')}</div>`
+        params.forEach(p => {
+          const name = p.seriesName === 'Prospective' ? 'Prospective Reserve' : p.seriesName === 'Retrospective' ? 'Retrospective Reserve' : 'Gross GPV'
+          result += `<div class="flex justify-between items-center space-x-4">
+            <div class="flex items-center space-x-1">
+              ${p.marker}
+              <span class="text-slate-300 text-[11px]">${name}</span>
+            </div>
+            <span class="font-mono text-white font-medium text-[11px]">${formatCurrency(p.value)}</span>
+          </div>`
+        })
+        return `<div class="p-1">${result}</div>`
+      }
+    },
+    toolbox: {
+      feature: {
+        dataZoom: { yAxisIndex: 'none', title: { zoom: 'Zoom', back: 'Restore' } },
+        dataView: { readOnly: true, title: 'Data', lang: ['Data View', 'Close', 'Refresh'] },
+        saveAsImage: { title: 'Save' }
+      },
+      iconStyle: { borderColor: '#94a3b8' },
+      right: 20
+    },
     legend: {
       data: ['Prospective', 'Retrospective', 'Gross GPV'],
       textStyle: { color: ACCENT.slate, fontSize: 11 },
       top: 0,
-      right: 10,
+      left: 10,
     },
     grid: chartGrid,
     xAxis: {

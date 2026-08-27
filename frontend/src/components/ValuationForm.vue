@@ -1,4 +1,5 @@
 <script setup>
+import { computed } from 'vue'
 import { ChevronDown, CheckCircle2, Clock } from 'lucide-vue-next'
 
 defineProps({
@@ -41,6 +42,27 @@ defineProps({
 })
 
 const emit = defineEmits(['submit', 'open-table-modal'])
+
+const ageError = computed(() => {
+  if (props.form.issue_age > 120) return '⚠ Age must be ≤ 120'
+  if (props.form.issue_age < 0) return '⚠ Age cannot be negative'
+  return null
+})
+
+const termError = computed(() => {
+  if (props.form.product_type !== 'whole_life') {
+    if (props.form.term + props.form.issue_age > 120) return '⚠ Term exceeds mortality lifespan'
+    if (props.form.term <= 0) return '⚠ Term must be > 0'
+  }
+  return null
+})
+
+const rateError = computed(() => {
+  if (props.form.interest_rate > 0.20) return '⚠ Extreme rate assumption (> 20%)'
+  return null
+})
+
+const hasErrors = computed(() => ageError.value || termError.value || rateError.value)
 </script>
 
 <template>
@@ -82,10 +104,12 @@ const emit = defineEmits(['submit', 'open-table-modal'])
           <div>
             <label class="text-[11px] text-slate-400 font-medium mb-1 block">Issue Age</label>
             <input type="number" v-model.number="form.issue_age" min="0" max="100" class="input-field" />
+            <div v-if="ageError" class="text-rose-400 text-[10px] mt-1">{{ ageError }}</div>
           </div>
           <div v-if="form.product_type !== 'whole_life'">
             <label class="text-[11px] text-slate-400 font-medium mb-1 block">Term (yrs)</label>
             <input type="number" v-model.number="form.term" min="1" max="80" class="input-field" />
+            <div v-if="termError" class="text-rose-400 text-[10px] mt-1">{{ termError }}</div>
           </div>
         </div>
 
@@ -106,6 +130,7 @@ const emit = defineEmits(['submit', 'open-table-modal'])
         <div>
           <label class="text-[10px] text-slate-500 mb-1 block">Base Rate (i)</label>
           <input type="number" v-model.number="form.interest_rate" step="0.005" min="0.0" max="0.20" class="input-field" />
+          <div v-if="rateError" class="text-rose-400 text-[10px] mt-1">{{ rateError }}</div>
         </div>
         <div>
           <label class="text-[10px] text-slate-500 mb-1 block">Acquisition (α)</label>
@@ -173,15 +198,15 @@ const emit = defineEmits(['submit', 'open-table-modal'])
     <div class="pt-2">
       <button
         @click="emit('submit')"
-        :disabled="loading"
+        :disabled="loading || hasErrors"
         type="button"
-        class="btn-primary w-full py-2.5 flex items-center justify-center space-x-2 text-[13px]"
+        :class="['w-full py-2.5 flex items-center justify-center space-x-2 text-[13px] transition-all', loading || hasErrors ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-white/[0.05]' : 'btn-primary']"
       >
         <svg v-if="loading" class="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
         </svg>
-        <span>{{ loading ? 'Running...' : 'Run Valuation Engine' }}</span>
+        <span>{{ loading ? 'Running...' : hasErrors ? 'Fix Errors to Run' : 'Run Valuation Engine' }}</span>
       </button>
 
       <!-- Execution Status Area -->
