@@ -549,13 +549,6 @@ async function runSamplePortfolioDemo(nPolicies = 1000) {
 // Lifecycle Hooks
 // ────────────────────────────────────────────────────────────
 
-function handleGlobalKeydown(e) {
-  if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-    e.preventDefault()
-    showCommandPalette.value = true
-  }
-}
-
 function handleCommandPaletteAction(actionId) {
   switch (actionId) {
     case 'run_valuation':
@@ -580,7 +573,6 @@ function handleCommandPaletteAction(actionId) {
 }
 
 onMounted(async () => {
-  window.addEventListener('keydown', handleGlobalKeydown)
   const isConnected = await checkBackendConnection()
   if (isConnected) {
     // Only execute the ultra-fast deterministic baseline on initial app launch (<10ms)
@@ -590,7 +582,6 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
-  window.removeEventListener('keydown', handleGlobalKeydown)
   if (activeSocketConnection) {
     activeSocketConnection.close()
     activeSocketConnection = null
@@ -686,13 +677,7 @@ onUnmounted(() => {
 
         <!-- Search Bar -->
         <div class="hidden sm:flex items-center flex-1 max-w-md">
-          <div class="relative w-full cursor-pointer group" @click="showCommandPalette = true" role="button">
-            <svg class="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-slate-500 group-hover:text-sky-400 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
-            </svg>
-            <input type="text" placeholder="⌘K Quick Actions" class="input-field pl-9 pr-14 py-2 text-[13px] cursor-pointer group-hover:border-sky-500/50 transition-colors" readonly />
-            <span class="absolute right-3 top-1/2 -translate-y-1/2 text-[10px] text-slate-500 bg-slate-800 px-1.5 py-0.5 rounded font-mono group-hover:text-sky-300">⌘K</span>
-          </div>
+          <CommandPalette @action="handleCommandPaletteAction" />
         </div>
 
         <!-- Right Actions -->
@@ -1002,7 +987,6 @@ onUnmounted(() => {
     </div>
     
     <!-- Modals -->
-    <CommandPalette v-model="showCommandPalette" @action="handleCommandPaletteAction" />
     <RunHistoryModal v-model="showHistoryModal" :history="runHistory" />
   </div>
 </template>

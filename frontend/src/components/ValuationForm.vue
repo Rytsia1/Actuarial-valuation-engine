@@ -2,7 +2,7 @@
 import { computed } from 'vue'
 import { ChevronDown, CheckCircle2, Clock } from 'lucide-vue-next'
 
-defineProps({
+const props = defineProps({
   form: {
     type: Object,
     required: true,
