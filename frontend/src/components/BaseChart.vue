@@ -47,15 +47,6 @@ function init() {
 
   if (!chartInstance) {
     chartInstance = markRaw(echarts.init(chartRef.value, props.theme))
-
-    if (props.autoResize && typeof window !== 'undefined' && window.ResizeObserver) {
-      resizeObserver = new ResizeObserver(() => {
-        if (chartRef.value && chartRef.value.clientWidth > 0 && chartRef.value.clientHeight > 0) {
-          chartInstance?.resize()
-        }
-      })
-      resizeObserver.observe(chartRef.value)
-    }
   }
 
   if (props.option && chartInstance) {
@@ -66,7 +57,7 @@ function init() {
 function resize() {
   if (chartInstance && chartRef.value && chartRef.value.clientWidth > 0) {
     chartInstance.resize()
-  } else {
+  } else if (!chartInstance && chartRef.value && chartRef.value.clientWidth > 0) {
     init()
   }
 }
@@ -103,6 +94,14 @@ watch(
 )
 
 onMounted(() => {
+  if (props.autoResize && typeof window !== 'undefined' && window.ResizeObserver) {
+    resizeObserver = new ResizeObserver(() => {
+      resize()
+    })
+    if (chartRef.value) {
+      resizeObserver.observe(chartRef.value)
+    }
+  }
   nextTick(init)
 })
 
