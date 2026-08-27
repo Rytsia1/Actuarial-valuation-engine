@@ -94,7 +94,7 @@ defineExpose({
       </div>
       <div class="overflow-x-auto card-inset rounded-lg max-h-[380px]">
         <table class="data-table">
-          <thead>
+          <thead class="sticky top-0 bg-slate-800/80 backdrop-blur-sm border-b border-slate-700 z-10">
             <tr>
               <th>Scenario</th>
               <th>Rate Shift</th>
@@ -106,7 +106,7 @@ defineExpose({
               <th>Solvency Impact</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody class="text-slate-300">
             <tr v-for="sc in sensitivityData.combined_scenarios" :key="sc.scenario_id">
               <td>
                 <div class="font-semibold text-white text-[11px]">{{ sc.name }}</div>

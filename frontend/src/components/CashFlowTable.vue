@@ -37,7 +37,7 @@ function formatCurrency(val) {
     <!-- Table Container with Horizontal & Vertical Scroll -->
     <div class="overflow-x-auto border border-slate-800 rounded-lg max-h-[520px]">
       <table class="min-w-full text-left text-xs divide-y divide-slate-800 font-mono">
-        <thead class="bg-slate-900/90 text-slate-300 sticky top-0 z-10 backdrop-blur">
+        <thead class="sticky top-0 bg-slate-800/80 backdrop-blur-sm border-b border-slate-700 z-10 text-slate-300">
           <tr>
             <th class="px-3 py-2.5 font-semibold">Year (t)</th>
             <th class="px-3 py-2.5 font-semibold">Age</th>

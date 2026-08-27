@@ -1,5 +1,6 @@
 <script setup>
 import { computed } from 'vue'
+import { BarChart2 } from 'lucide-vue-next'
 import BaseChart from './BaseChart.vue'
 
 const props = defineProps({
@@ -262,7 +263,7 @@ const distChartOption = computed(() => {
     </div>
 
     <!-- Fan Chart & Distribution Grid -->
-    <div v-show="stochasticData || loading" class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
       <!-- Fan Chart -->
       <div class="card p-5">
         <div class="flex items-center justify-between mb-3">
@@ -272,8 +273,12 @@ const distChartOption = computed(() => {
           </div>
 
         </div>
-        <div class="w-full h-80">
-          <BaseChart :option="fanChartOption" :loading="loading" />
+        <div class="w-full h-80 relative">
+          <div v-if="!fanChartOption && !loading" class="absolute inset-0 flex flex-col items-center justify-center border border-dashed border-white/[0.05] rounded-lg bg-slate-900/50 text-slate-500">
+            <BarChart2 class="h-8 w-8 opacity-20 mb-2" />
+            <span class="text-xs">Run valuation to generate distribution paths.</span>
+          </div>
+          <BaseChart v-else :option="fanChartOption" :loading="loading" />
         </div>
       </div>
 
@@ -286,8 +291,12 @@ const distChartOption = computed(() => {
           </div>
 
         </div>
-        <div class="w-full h-80">
-          <BaseChart :option="distChartOption" :loading="loading" />
+        <div class="w-full h-80 relative">
+          <div v-if="!distChartOption && !loading" class="absolute inset-0 flex flex-col items-center justify-center border border-dashed border-white/[0.05] rounded-lg bg-slate-900/50 text-slate-500">
+            <BarChart2 class="h-8 w-8 opacity-20 mb-2" />
+            <span class="text-xs">Run valuation to generate distribution paths.</span>
+          </div>
+          <BaseChart v-else :option="distChartOption" :loading="loading" />
         </div>
       </div>
     </div>

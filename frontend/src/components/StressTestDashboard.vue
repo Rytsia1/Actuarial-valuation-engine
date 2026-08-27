@@ -245,7 +245,7 @@ const chartTooltip = {
   textStyle: { color: '#E2E8F0', fontSize: 12, fontFamily: 'Inter, system-ui' },
 }
 
-const chartAxisLabel = { color: '#64748B', fontSize: 10, fontFamily: "'JetBrains Mono', monospace" }
+const chartAxisLabel = { color: '#64748B', fontSize: 11, fontFamily: "'JetBrains Mono', monospace" }
 const chartSplitLine = { lineStyle: { color: 'rgba(255, 255, 255, 0.04)' } }
 const chartAxisLine = { lineStyle: { color: '#1E293B' } }
 
@@ -281,7 +281,7 @@ const tornadoChartOption = computed(() => {
     },
     legend: {
       data: ['Downside Shock', 'Upside Shock', 'Current Slider Shock'],
-      textStyle: { color: '#94A3B8', fontSize: 11 },
+      textStyle: { color: '#94A3B8', fontSize: 12 },
       top: 0,
       right: 10,
     },
@@ -306,12 +306,14 @@ const tornadoChartOption = computed(() => {
         type: 'bar',
         data: lowDeltas,
         itemStyle: { borderRadius: [3, 3, 3, 3], color: '#38BDF8' },
+        label: { show: true, position: 'left', color: '#CBD5E1', formatter: '{c}' },
       },
       {
         name: 'Upside Shock',
         type: 'bar',
         data: highDeltas,
         itemStyle: { borderRadius: [3, 3, 3, 3], color: '#F43F5E' },
+        label: { show: true, position: 'right', color: '#CBD5E1', formatter: '{c}' },
       },
       {
         name: 'Current Slider Shock',
@@ -323,6 +325,7 @@ const tornadoChartOption = computed(() => {
           borderColor: '#FFFFFF',
           borderWidth: 1,
         },
+        label: { show: true, position: 'right', color: '#CBD5E1', formatter: '{c}' },
       },
     ],
   }

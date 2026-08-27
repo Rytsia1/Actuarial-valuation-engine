@@ -3,6 +3,7 @@ import { ref, shallowRef, markRaw, onMounted, onUnmounted, nextTick } from 'vue'
 import { VueFlow, useVueFlow } from '@vue-flow/core'
 import { Background } from '@vue-flow/background'
 import { Controls } from '@vue-flow/controls'
+import { MiniMap } from '@vue-flow/minimap'
 import * as echarts from 'echarts'
 import {
   FileText,
@@ -23,6 +24,7 @@ import {
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '@vue-flow/controls/dist/style.css'
+import '@vue-flow/minimap/dist/style.css'
 
 import PolicyInputNode from '../components/nodes/PolicyInputNode.vue'
 import InflowNode from '../components/nodes/InflowNode.vue'
@@ -482,6 +484,7 @@ onUnmounted(() => {
           @node-click="() => {}"
         >
           <Background pattern-color="rgba(255, 255, 255, 0.05)" :gap="24" />
+          <MiniMap pannable zoomable class="bg-slate-800 border-slate-700" />
           <Controls class="!bg-[#0F172A] !border !border-white/[0.08] !rounded-lg !text-slate-300" />
         </VueFlow>
       </main>

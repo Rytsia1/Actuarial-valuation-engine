@@ -229,8 +229,8 @@ const pnlChartOption = computed(() => {
         <p class="text-[11px] text-slate-500 mb-3">LRC roll-forward</p>
         <div class="overflow-x-auto card-inset rounded-lg max-h-[380px]">
           <table class="data-table">
-            <thead><tr><th>Duration</th><th>BEL</th><th>RA</th><th>CSM</th><th>Total LRC</th></tr></thead>
-            <tbody>
+            <thead class="sticky top-0 bg-slate-800/80 backdrop-blur-sm border-b border-slate-700 z-10"><tr><th>Duration</th><th>BEL</th><th>RA</th><th>CSM</th><th>Total LRC</th></tr></thead>
+            <tbody class="text-slate-300">
               <tr v-for="row in ifrs17Data.balance_sheet_schedule" :key="row.duration">
                 <td class="text-sky-400 font-semibold font-mono">t={{ row.duration }}</td>
                 <td class="font-mono">{{ formatCurrency(row.bel) }}</td>
@@ -247,8 +247,8 @@ const pnlChartOption = computed(() => {
         <p class="text-[11px] text-slate-500 mb-3">P&amp;L recognition</p>
         <div class="overflow-x-auto card-inset rounded-lg max-h-[380px]">
           <table class="data-table">
-            <thead><tr><th>Year</th><th>Revenue</th><th>Expenses</th><th>CSM Release</th><th>Result</th></tr></thead>
-            <tbody>
+            <thead class="sticky top-0 bg-slate-800/80 backdrop-blur-sm border-b border-slate-700 z-10"><tr><th>Year</th><th>Revenue</th><th>Expenses</th><th>CSM Release</th><th>Result</th></tr></thead>
+            <tbody class="text-slate-300">
               <tr v-for="row in ifrs17Data.income_statement_schedule" :key="row.year">
                 <td class="text-emerald-400 font-semibold font-mono">Yr {{ row.year + 1 }}</td>
                 <td class="text-emerald-400 font-mono">{{ formatCurrency(row.insurance_revenue) }}</td>
