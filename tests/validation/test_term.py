@@ -1,5 +1,6 @@
 import pytest
 import numpy as np
+from pydantic import ValidationError
 
 from actuary_engine.pricing.insurance import InsurancePricer
 from actuary_engine.models.assumptions import InterestAssumption
@@ -133,3 +134,30 @@ def test_term_insurance_epv_analytical_loop(static_mortality_table):
     
     assert np.isclose(actual_epv, expected_epv, rtol=1e-12, atol=1e-12), \
         f"Term EPV mismatch: engine={actual_epv:.6f}, analytical={expected_epv:.6f}"
+
+def test_term_zero_error():
+    """
+    Term=0 should error in the contract layer due to Pydantic constraints.
+    """
+    with pytest.raises(ValidationError):
+        PolicyContract(
+            issue_age=30,
+            product_type=ProductType.TERM,
+            term=0,
+            sum_assured=1.0
+        )
+
+def test_term_max_age(static_mortality_table):
+    """
+    Age=max_age should raise a ValueError when validated against the mortality table 
+    because issue_age + term > omega.
+    """
+    age = static_mortality_table.max_age
+    contract = PolicyContract(
+        issue_age=age,
+        product_type=ProductType.TERM,
+        term=1,
+        sum_assured=1.0
+    )
+    with pytest.raises(ValueError, match="exceeds mortality table maximum age"):
+        contract.validate_against_table(static_mortality_table)

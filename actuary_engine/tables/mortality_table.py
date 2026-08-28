@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Optional, Union
+import os
 
 import numpy as np
 import pandas as pd
@@ -20,7 +21,8 @@ import pandas as pd
 _DEFAULT_RADIX: int = 10_000_000
 
 # Path to the bundled SOA Illustrative Life Table
-_SOA_ILT_PATH: Path = Path(__file__).parent.parent / "data" / "soa_ilt.csv"
+_env_path = os.getenv("MORTALITY_TABLE_PATH")
+_SOA_ILT_PATH: Path = Path(_env_path) if _env_path else Path(__file__).parent.parent / "data" / "soa_ilt.csv"
 
 
 class MortalityTable:

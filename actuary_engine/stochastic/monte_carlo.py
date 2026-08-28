@@ -378,8 +378,9 @@ class StochasticValuationEngine:
             current_batch_size = min(chunk_size, n_scenarios - completed)
             batch_seed = (current_seed + chunk_idx * 1000) if current_seed is not None else None
 
-            # Execute batch synchronously in thread or loop
-            batch_bel, batch_rates = self._simulate_batch(
+            # Execute batch safely in a thread pool to avoid blocking the event loop
+            batch_bel, batch_rates = await asyncio.to_thread(
+                self._simulate_batch,
                 contract=contract,
                 gross_premium=gross_premium,
                 n_batch=current_batch_size,
