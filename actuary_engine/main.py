@@ -1120,3 +1120,6 @@ def simulate_contract_graph(payload: ContractGraphPayload) -> SimulateGraphRespo
 
 
 
+
+from actuary_engine.api.routes.blueprint import router as blueprint_router
+app.include_router(blueprint_router)
