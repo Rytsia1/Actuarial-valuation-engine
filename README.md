@@ -37,6 +37,7 @@
 **Frontend (Dashboard & Blueprint)**
 - Vue 3 (Composition API)
 - Vite
+- Vue Router (SPA State Management & Navigation)
 - Tailwind CSS
 - Vue Flow (for the node-based logic builder)
 - Apache ECharts (for charting and distributions)
@@ -89,6 +90,9 @@ actuarial-valuation-engine/
 │   └── valuation/         # IFRS 17, Reserves, and Sensitivities
 ├── frontend/              # Vue 3 Frontend
 │   ├── src/               # UI components, Vue Flow, ECharts
+│   │   ├── components/    # Reusable dashboard widgets
+│   │   ├── router/        # Vue Router configuration
+│   │   └── views/         # Main layout and legal pages (Terms/Privacy)
 │   ├── nginx.conf         # Nginx reverse proxy configuration
 │   └── Dockerfile         # Multi-stage frontend build
 ├── Dockerfile             # Backend Dockerfile
