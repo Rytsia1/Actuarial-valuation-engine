@@ -32,7 +32,7 @@ def test_whole_life_epv_analytical(static_mortality_table):
     # we can compute the theoretical expected value dynamically from the table.
     expected_epv = 123456.78 * comm.get_Mx(30) / comm.get_Dx(30)
     
-    assert np.isclose(actual_epv, expected_epv, rtol=1e-7), (
+    assert np.isclose(actual_epv, expected_epv, rtol=1e-12, atol=1e-12), (
         f"Analytical EPV mismatch. Expected: {expected_epv}, "
         f"but got: {actual_epv}. Check the core discounting or mortality logic."
     )
