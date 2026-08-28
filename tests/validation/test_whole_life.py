@@ -1,9 +1,9 @@
 import pytest
 import numpy as np
 
-from actuary_engine.pricing.insurance import InsurancePricer
+from actuary_engine.domain.pricing.insurance import InsurancePricer
 from actuary_engine.models.assumptions import InterestAssumption
-from actuary_engine.tables.commutation import CommutationFunctions
+from actuary_engine.domain.tables.commutation import CommutationFunctions
 from actuary_engine.models.contracts import PolicyContract, ProductType
 from tests.conftest import DISCOUNT_RATE
 

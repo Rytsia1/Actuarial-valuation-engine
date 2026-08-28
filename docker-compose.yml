@@ -7,12 +7,16 @@ services:
       - "8000:8000"
     environment:
       - PYTHONUNBUFFERED=1
+      - PORT=${PORT:-8000}
+      - MORTALITY_TABLE_PATH=/app/data/soa_ilt.csv
+    env_file:
+      - .env
 
   frontend:
     build:
       context: ./frontend
       args:
-        - VITE_API_URL=http://localhost:8000
+        - VITE_API_URL=http://localhost:8000/api/v1
     ports:
       - "3000:80"
     depends_on:

@@ -1,8 +1,8 @@
 import pytest
 import numpy as np
 
-from actuary_engine.stochastic.monte_carlo import StochasticValuationEngine
-from actuary_engine.stochastic.esg import VasicekESG, VasicekParams
+from actuary_engine.domain.stochastic.monte_carlo import StochasticValuationEngine
+from actuary_engine.domain.stochastic.esg import VasicekESG, VasicekParams
 from actuary_engine.models.contracts import PolicyContract, ProductType
 from tests.conftest import DISCOUNT_RATE
 
