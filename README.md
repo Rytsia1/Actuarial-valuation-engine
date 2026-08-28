@@ -15,7 +15,7 @@
 *Real-time stochastic projection, tail risk (CVaR) analysis, and comprehensive reserve profiles.*
 
 ### Contract Logic Blueprint Builder
-<img width="1917" height="1078" alt="Screenshot 2026-08-27 205835" src="https://github.com/user-attachments/assets/f237c254-c12a-4854-bddb-a260ba7050df" />
+<img width="1917" height="1078" alt="Screenshot 2026-08-27 223759" src="https://github.com/user-attachments/assets/2e2bcb71-7aa3-451f-8060-38e548926705" />
 
 *A visual, node-based DAG (Directed Acyclic Graph) editor for designing insurance cash flow blueprints without writing code.*
 
