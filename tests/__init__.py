@@ -1,1 +1,1 @@
-# Init file
+# Tests package

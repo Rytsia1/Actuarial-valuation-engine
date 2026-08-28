@@ -1,16 +1,28 @@
 import pytest
+
 from actuary_engine.tables.mortality_table import MortalityTable
 
-@pytest.fixture(scope="session")
-def mortality_table():
-    # Use absolute path from environment variable or relative to project root
-    return MortalityTable("soa_ilt.csv")
+# Constant for fixed discount rate
+DISCOUNT_RATE = 0.05
 
 @pytest.fixture(scope="session")
-def discount_rate():
-    return 0.05  # Fixed for deterministic validation
+def static_mortality_table():
+    """
+    Fixture that loads a static mortality table for deterministic testing.
+    This provides a consistent, mathematically provable baseline for benchmark validation.
+    """
+    return MortalityTable.from_soa_ilt()
+
+# Stochastic simulation configuration
+STOCHASTIC_CONFIG = {
+    "NUM_PATHS": 10000,
+    "RANDOM_SEED": 42
+}
 
 @pytest.fixture(scope="session")
-def deterministic_whole_life(mortality_table, discount_rate):
-    from actuary_engine.pricing.insurance import WholeLife
-    return WholeLife(age=30, mortality=mortality_table, discount_rate=discount_rate)
+def stochastic_config():
+    """
+    Fixture providing consistent parameters for stochastic tests.
+    Ensures deterministic reproducibility across Monte Carlo simulations.
+    """
+    return STOCHASTIC_CONFIG
