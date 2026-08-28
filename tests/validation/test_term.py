@@ -97,3 +97,39 @@ def test_term_insurance_non_negativity(static_mortality_table):
     
     assert term_epv <= wl_epv, "Term EPV should not exceed Whole Life EPV."
     assert term_epv > 0, "Term EPV must be positive."
+
+def test_term_insurance_epv_analytical_loop(static_mortality_table):
+    """
+    Compute the expected EPV inside the test using a pure-Python/NumPy loop that mirrors the formula.
+    This provides an internal analytical benchmark independent of the engine's commutation implementation.
+    """
+    interest_rate = DISCOUNT_RATE
+    age = 30
+    term_length = 10
+    benefit = 100_000.0
+    v = 1.0 / (1.0 + interest_rate)
+    
+    expected_epv = 0.0
+    tPx = 1.0
+    for t in range(term_length):
+        qx_t = static_mortality_table.get_qx(age + t)
+        expected_epv += (v ** (t+1)) * tPx * qx_t
+        tPx *= (1.0 - qx_t)
+        
+    expected_epv *= benefit
+    
+    interest = InterestAssumption(annual_rate=interest_rate)
+    comm = CommutationFunctions(table=static_mortality_table, interest=interest)
+    pricer = InsurancePricer(commutation=comm)
+    
+    contract = PolicyContract(
+        issue_age=age,
+        product_type=ProductType.TERM,
+        term=term_length,
+        sum_assured=benefit
+    )
+    
+    actual_epv = pricer.price_contract(contract)
+    
+    assert np.isclose(actual_epv, expected_epv, rtol=1e-12, atol=1e-12), \
+        f"Term EPV mismatch: engine={actual_epv:.6f}, analytical={expected_epv:.6f}"
