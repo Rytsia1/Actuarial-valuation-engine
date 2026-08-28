@@ -6,29 +6,39 @@ import sys
 # Add project root to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from actuary_engine.pricing.stochastic_insurance import StochasticWholeLife
+from actuary_engine.stochastic.monte_carlo import StochasticValuationEngine
+from actuary_engine.stochastic.esg import VasicekESG, VasicekParams
+from actuary_engine.models.contracts import PolicyContract, ProductType
 from actuary_engine.tables.mortality_table import MortalityTable
 
 def run_simulation():
     # Hardcoded parameters matching the benchmark
-    file_path = "soa_ilt.csv"
     discount_rate = 0.05
     num_paths = 10000
     random_seed = 42
     
-    # We assume the mortality table can be loaded directly from the csv path
-    mortality_table = MortalityTable(file_path)
-    model = StochasticWholeLife(
-        age=30, 
-        discount_rate=discount_rate, 
-        mortality_table=mortality_table,
-        num_paths=num_paths,
-        random_seed=random_seed
+    # Load the bundled SOA ILT
+    mortality_table = MortalityTable.from_soa_ilt()
+    
+    params = VasicekParams(
+        r0=discount_rate,
+        kappa=0.001, 
+        theta=discount_rate,
+        sigma=0.0
     )
+    esg = VasicekESG(params=params)
+    
+    contract = PolicyContract(
+        issue_age=30,
+        product_type=ProductType.WHOLE_LIFE,
+        sum_assured=100000.0
+    )
+    
+    engine = StochasticValuationEngine(table=mortality_table, esg=esg)
     
     print(f"Running Monte Carlo Simulation with {num_paths} paths...")
     # This is the core method we are profiling to identify hotspots
-    model.calculate_bel_simulation()
+    engine.run_simulation(contract, 0.0, n_scenarios=num_paths, seed=random_seed)
 
 def main():
     prof_file = "profile_output.prof"
