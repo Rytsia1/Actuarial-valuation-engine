@@ -32,6 +32,9 @@ dependencies = [
     "numba>=0.58.0",
 ]
 
+[tool.setuptools.packages.find]
+include = ["actuary_engine*"]
+
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
@@ -45,6 +48,9 @@ api = [
     "uvicorn[standard]>=0.27",
     "python-multipart>=0.0.9",
     "websockets>=12.0",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "psycopg2-binary>=2.9",
 ]
 
 [tool.pytest.ini_options]
