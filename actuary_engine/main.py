@@ -78,6 +78,12 @@ from actuary_engine.valuation.portfolio import PortfolioSummary, PortfolioValuat
 from actuary_engine.valuation.reserves import ReserveCalculator
 from actuary_engine.valuation.sensitivity import SensitivityEngine
 
+from actuary_engine.infrastructure.database import engine, Base
+from actuary_engine.infrastructure import models
+
+# Create database tables
+Base.metadata.create_all(bind=engine)
+
 logger = logging.getLogger("actuary_engine.api")
 
 # Initialize FastAPI App

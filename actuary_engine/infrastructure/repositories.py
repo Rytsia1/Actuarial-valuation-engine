@@ -18,15 +18,20 @@ class ProjectRepository:
         return self.db.query(Project).filter(Project.id == project_id).first()
 
     def list(self) -> List[Project]:
-        return self.db.query(Project).order_by(Project.updated_at.desc()).all()
+        # Order by pinned first, then by updated date
+        return self.db.query(Project).order_by(Project.is_pinned.desc(), Project.updated_at.desc()).all()
 
-    def update(self, project_id: uuid.UUID, name: Optional[str] = None, description: Optional[str] = None) -> Optional[Project]:
+    def update(self, project_id: uuid.UUID, name: Optional[str] = None, description: Optional[str] = None, is_pinned: Optional[bool] = None, sandbox_state: Optional[Dict[str, Any]] = None) -> Optional[Project]:
         project = self.get(project_id)
         if project:
             if name is not None:
                 project.name = name
             if description is not None:
                 project.description = description
+            if is_pinned is not None:
+                project.is_pinned = is_pinned
+            if sandbox_state is not None:
+                project.sandbox_state = sandbox_state
             self.db.commit()
             self.db.refresh(project)
         return project

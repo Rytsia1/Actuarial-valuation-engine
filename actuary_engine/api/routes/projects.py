@@ -29,7 +29,7 @@ def get_project(project_id: UUID, db: Session = Depends(get_db)):
 @router.put("/{project_id}", response_model=ProjectResponse)
 def update_project(project_id: UUID, request: UpdateProjectRequest, db: Session = Depends(get_db)):
     service = ProjectService(db)
-    project = service.update_project(project_id, request.name, request.description)
+    project = service.update_project(project_id, request.name, request.description, request.is_pinned, request.sandbox_state)
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return project

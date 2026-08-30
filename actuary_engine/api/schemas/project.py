@@ -10,11 +10,15 @@ class CreateProjectRequest(BaseModel):
 class UpdateProjectRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    is_pinned: Optional[bool] = None
+    sandbox_state: Optional[Dict[str, Any]] = None
 
 class ProjectResponse(BaseModel):
     id: UUID
     name: str
     description: Optional[str] = None
+    is_pinned: bool = False
+    sandbox_state: Optional[Dict[str, Any]] = None
     created_at: datetime
     updated_at: datetime
 

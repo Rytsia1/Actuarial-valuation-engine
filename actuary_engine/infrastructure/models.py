@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, Float, ForeignKey, JSON
+from sqlalchemy import Column, String, DateTime, Float, ForeignKey, JSON, Boolean
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 import uuid
@@ -17,6 +17,8 @@ class Project(Base):
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
     owner_id = Column(String(100))  # For multi-tenant support (placeholder)
+    is_pinned = Column(Boolean, default=False)
+    sandbox_state = Column(JSON, nullable=True)
 
     # Relationships
     contracts = relationship("Contract", back_populates="project", cascade="all, delete-orphan")

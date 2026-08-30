@@ -4,6 +4,8 @@ pandas==3.0.3
 pydantic==2.13.4
 python-multipart==0.0.32
 websockets==16.1.1
-numba==0.58.0
+numba==0.67.0
 fastapi==0.141.1
 uvicorn==0.52.1
+SQLAlchemy==2.0.51
+psycopg2-binary==2.9.12

@@ -1,4 +1,3 @@
-version: '3.8'
 
 services:
   postgres:
@@ -30,8 +29,6 @@ services:
       - PORT=${PORT:-8000}
       - MORTALITY_TABLE_PATH=/app/data/soa_ilt.csv
       - DATABASE_URL=postgresql://actura_user:actura_password@postgres:5432/actura_db
-    env_file:
-      - .env
 
   frontend:
     build:
