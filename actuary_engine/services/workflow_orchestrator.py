@@ -21,9 +21,10 @@ class ValuationWorkflow:
     Orchestrates the entire valuation lifecycle.
     Tracks which step the user is currently on and ensures prerequisites are met.
     """
-    def __init__(self, db: Session, project_id: UUID):
+    def __init__(self, db: Session, project_id: UUID, background_tasks=None):
         self.db = db
         self.project_id = project_id
+        self.background_tasks = background_tasks
         self.project_repo = ProjectRepository(db)
         self.contract_repo = ContractRepository(db)
         self.assumption_repo = AssumptionSetRepository(db)
@@ -100,7 +101,7 @@ class ValuationWorkflow:
         return {"step": current}
 
     def trigger_run(self) -> dict:
-        """Specific method to trigger the valuation run"""
+        """Specific method to trigger the valuation run asynchronously"""
         current = self.get_current_step()
         if current not in (WorkflowStep.RUNNING, WorkflowStep.RESULTS):
             raise WorkflowStateError("Cannot run valuation from current step")
@@ -109,10 +110,11 @@ class ValuationWorkflow:
         from actuary_engine.infrastructure.models import AssumptionSet
         assumptions = self.db.query(AssumptionSet).filter(AssumptionSet.project_id == self.project_id).order_by(AssumptionSet.created_at.desc()).all()
         
-        valuation_run = self.valuation_service.run_valuation(
-            project_id=self.project_id,
-            contract_id=contracts[0].id,
-            assumption_set_id=assumptions[0].id
+        from actuary_engine.services.async_valuation_service import AsyncValuationService
+        job_id = AsyncValuationService.submit_job(
+            project_id=str(self.project_id),
+            contract_id=str(contracts[0].id),
+            assumption_set_id=str(assumptions[0].id) if assumptions else "",
+            background_tasks=self.background_tasks
         )
-        return {"step": WorkflowStep.RESULTS, "valuation_run_id": valuation_run.id}
-
+        return {"step": WorkflowStep.RUNNING, "job_id": job_id}

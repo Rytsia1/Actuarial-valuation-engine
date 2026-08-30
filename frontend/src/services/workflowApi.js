@@ -24,5 +24,26 @@ export const workflowApi = {
     httpClient.post(`/workflow/${projectId}/assumptions`, { name, assumptions }),
 
   runValuation: (projectId) =>
-    httpClient.post(`/workflow/${projectId}/run`)
+    httpClient.post(`/workflow/${projectId}/run`),
+
+  getJobStatus: (jobId) =>
+    httpClient.get(`/workflow/status/${jobId}`),
+
+  pollValuation: async (jobId, onProgress) => {
+    while (true) {
+      const response = await workflowApi.getJobStatus(jobId)
+      const data = response.data
+      
+      if (data.progress !== undefined) {
+        onProgress(data.progress)
+      }
+      
+      if (data.step === 'results' || data.status === 'failed') {
+        return data
+      }
+      
+      // Wait 1 second before polling again
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+  }
 }

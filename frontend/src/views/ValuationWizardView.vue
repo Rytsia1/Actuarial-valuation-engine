@@ -22,12 +22,28 @@ const loadingStore = useLoadingStore()
 const projectId = route.params.projectId
 const state = ref(null)
 const isPolling = ref(false)
-const pollInterval = ref(null)
+const progress = ref(0)
 
 const projectName = ref('')
 const assumptionName = ref('Base Scenario')
 const discountRate = ref(0.05)
 const mortalityTable = ref('soa_ilt.csv')
+
+const startPolling = (jobId) => {
+  if (!jobId || isPolling.value) return
+  isPolling.value = true
+  progress.value = 0
+  
+  workflowApi.pollValuation(jobId, (p) => {
+    progress.value = p
+  }).then(data => {
+    isPolling.value = false
+    state.value = data
+  }).catch(err => {
+    isPolling.value = false
+    errorStore.setError({ code: 'POLL_ERROR', message: 'Failed to poll valuation status' })
+  })
+}
 
 const loadState = async () => {
   if (!projectId) {
@@ -37,6 +53,9 @@ const loadState = async () => {
   try {
     const response = await workflowApi.getState(projectId)
     state.value = response.data || response
+    if (state.value.step === WorkflowStep.RUNNING && state.value.job_id) {
+      startPolling(state.value.job_id)
+    }
   } catch (err) {
     errorStore.setError({ code: 'LOAD_ERROR', message: 'Failed to load workflow state' })
   }
@@ -44,15 +63,6 @@ const loadState = async () => {
 
 onMounted(() => {
   loadState()
-  pollInterval.value = setInterval(() => {
-    if (state.value?.step === WorkflowStep.RUNNING) {
-      loadState()
-    }
-  }, 2000)
-})
-
-onUnmounted(() => {
-  if (pollInterval.value) clearInterval(pollInterval.value)
 })
 
 const handleAction = async (action, data = null) => {
@@ -87,7 +97,9 @@ const handleAction = async (action, data = null) => {
       loadingStore.startLoading()
       const response = await workflowApi.runValuation(projectId)
       state.value = response.data || response
-      isPolling.value = true
+      if (state.value.job_id) {
+        startPolling(state.value.job_id)
+      }
     }
   } catch (err) {
     console.error(err)
@@ -211,10 +223,19 @@ const handleAction = async (action, data = null) => {
           </div>
 
           <!-- Step 5: Running -->
-          <div v-else-if="state.step === WorkflowStep.RUNNING" class="space-y-6 h-64 flex flex-col items-center justify-center animate-in fade-in zoom-in-95 duration-500">
-            <div class="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-6 shadow-[0_0_15px_rgba(99,102,241,0.5)]"></div>
+          <div v-else-if="state.step === WorkflowStep.RUNNING" class="space-y-6 flex flex-col items-center justify-center py-12 animate-in fade-in zoom-in-95 duration-500">
+            <div class="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-2 shadow-[0_0_15px_rgba(99,102,241,0.5)]"></div>
             <h2 class="text-2xl font-bold text-white">Valuation in Progress</h2>
-            <p class="text-slate-400">Running stochastic simulations and compiling results...</p>
+            
+            <div class="w-full max-w-md mt-6">
+              <div class="flex justify-between text-sm text-slate-400 mb-2">
+                <span>{{ progress < 20 ? 'Preparing engine...' : progress < 90 ? 'Running Monte Carlo...' : 'Finalizing results...' }}</span>
+                <span>{{ Math.round(progress) }}%</span>
+              </div>
+              <div class="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
+                <div class="h-full bg-indigo-500 rounded-full transition-all duration-500 ease-out" :style="{ width: `${progress}%` }"></div>
+              </div>
+            </div>
           </div>
 
           <!-- Step 6: Results -->

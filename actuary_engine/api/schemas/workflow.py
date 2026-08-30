@@ -16,6 +16,8 @@ class WorkflowStateResponse(BaseModel):
     contract_id: Optional[UUID] = None
     assumption_set_id: Optional[UUID] = None
     valuation_run_id: Optional[UUID] = None
+    job_id: Optional[str] = None
+    progress: Optional[float] = None
     step: str
     blueprint: Optional[Dict[str, Any]] = None
     result: Optional[Dict[str, Any]] = None

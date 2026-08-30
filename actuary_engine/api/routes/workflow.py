@@ -58,9 +58,39 @@ def set_assumptions(project_id: UUID, request: CreateAssumptionSetRequest, db: S
     state = workflow.transition_to_next_step()
     return {"project_id": project_id, "assumption_set_id": assumptions.id, **state}
 
+from fastapi import BackgroundTasks
+
 @router.post("/{project_id}/run", response_model=WorkflowStateResponse)
-def trigger_valuation(project_id: UUID, db: Session = Depends(get_db)):
-    """Execute the valuation and advance to results."""
-    workflow = ValuationWorkflow(db, project_id)
-    state = workflow.trigger_run()  # This triggers the run
+def trigger_valuation(project_id: UUID, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Execute the valuation asynchronously and return a Job ID."""
+    workflow = ValuationWorkflow(db, project_id, background_tasks)
+    state = workflow.trigger_run()  # This triggers the async run
     return {"project_id": project_id, **state}
+
+@router.get("/status/{job_id}", response_model=WorkflowStateResponse)
+def get_job_status(job_id: str):
+    """Poll the status of an asynchronous valuation job."""
+    from actuary_engine.services.async_valuation_service import AsyncValuationService
+    from actuary_engine.core.jobs import JobStatus
+    
+    job = AsyncValuationService.get_job_status(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    if job.status == JobStatus.COMPLETED:
+        return {
+            "project_id": UUID(job.project_id),
+            "step": "results",
+            "job_id": job.id,
+            "progress": job.progress,
+            "result": job.result
+        }
+    elif job.status == JobStatus.FAILED:
+        raise HTTPException(status_code=500, detail=job.error)
+    else:
+        return {
+            "project_id": UUID(job.project_id),
+            "step": "running",
+            "job_id": job.id,
+            "progress": job.progress
+        }
