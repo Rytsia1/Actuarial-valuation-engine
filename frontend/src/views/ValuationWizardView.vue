@@ -1,18 +1,15 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { workflowApi, WorkflowStep } from '../services/workflowApi'
 import { useErrorStore } from '../stores/useErrorStore'
 import { useLoadingStore } from '../stores/useLoadingStore'
 import StepIndicator from '../components/StepIndicator.vue'
 import ProductCard from '../components/ProductCard.vue'
-import RiskAnalysis from '../components/RiskAnalysis.vue'
 import LoadingOverlay from '../components/LoadingOverlay.vue'
 import ErrorBanner from '../components/ErrorBanner.vue'
-// Normally we'd import the actual blueprint editor here, but for the wizard we might navigate or render it.
-// To keep it simple, we will provide a "Configure Blueprint" button that takes them to the builder,
-// or we assume the builder is part of this view. The prompt says "BlueprintEditor".
-// I'll create a simple placeholder form for assumptions and button for blueprint.
+import { PRESET_TEMPLATES } from '../utils/presets'
+import { ChevronLeft } from 'lucide-vue-next'
 
 const route = useRoute()
 const router = useRouter()
@@ -21,29 +18,10 @@ const loadingStore = useLoadingStore()
 
 const projectId = route.params.projectId
 const state = ref(null)
-const isPolling = ref(false)
-const progress = ref(0)
 
 const projectName = ref('')
-const assumptionName = ref('Base Scenario')
-const discountRate = ref(0.05)
-const mortalityTable = ref('soa_ilt.csv')
-
-const startPolling = (jobId) => {
-  if (!jobId || isPolling.value) return
-  isPolling.value = true
-  progress.value = 0
-  
-  workflowApi.pollValuation(jobId, (p) => {
-    progress.value = p
-  }).then(data => {
-    isPolling.value = false
-    state.value = data
-  }).catch(err => {
-    isPolling.value = false
-    errorStore.setError({ code: 'POLL_ERROR', message: 'Failed to poll valuation status' })
-  })
-}
+const selectedProductType = ref(null)
+const selectedPresetId = ref('term_life_20y')
 
 const loadState = async () => {
   if (!projectId) {
@@ -53,8 +31,10 @@ const loadState = async () => {
   try {
     const response = await workflowApi.getState(projectId)
     state.value = response.data || response
-    if (state.value.step === WorkflowStep.RUNNING && state.value.job_id) {
-      startPolling(state.value.job_id)
+    
+    // If state is beyond Blueprint (because of old backend data), reset to Blueprint
+    if ([WorkflowStep.ASSUMPTIONS, WorkflowStep.VALIDATION, WorkflowStep.RUNNING, WorkflowStep.RESULTS].includes(state.value.step)) {
+       state.value.step = WorkflowStep.BLUEPRINT
     }
   } catch (err) {
     errorStore.setError({ code: 'LOAD_ERROR', message: 'Failed to load workflow state' })
@@ -64,6 +44,18 @@ const loadState = async () => {
 onMounted(() => {
   loadState()
 })
+
+const goBack = () => {
+  if (state.value.step === WorkflowStep.CONTRACT) {
+    state.value.step = WorkflowStep.PROJECT
+  } else if (state.value.step === WorkflowStep.BLUEPRINT) {
+    state.value.step = WorkflowStep.CONTRACT
+  }
+}
+
+const selectPreset = (key) => {
+  selectedPresetId.value = key
+}
 
 const handleAction = async (action, data = null) => {
   errorStore.clearError()
@@ -75,35 +67,30 @@ const handleAction = async (action, data = null) => {
       router.replace(`/wizard/${newState.project_id}`)
       state.value = newState
     } 
-    else if (action === 'create_contract') {
-      loadingStore.startLoading()
-      const response = await workflowApi.addContract(projectId, `${data} Contract`, data, { nodes: [], edges: [] })
-      state.value = response.data || response
+    else if (action === 'select_product') {
+      selectedProductType.value = data
+      // Pre-select preset based on product type
+      if (data === 'Term') selectedPresetId.value = 'term_life_20y'
+      else if (data === 'WholeLife') selectedPresetId.value = 'endowment_15y'
+      else if (data === 'Annuity') selectedPresetId.value = 'unit_linked_10y'
+      
+      state.value.step = WorkflowStep.BLUEPRINT
     } 
-    else if (action === 'validate_blueprint') {
-      // In a real app, this would save the blueprint state first.
-      // Assuming they went to the builder and saved, we just reload state to advance.
-      router.push(`/projects/${projectId}`) // Go to actual builder
-    } 
-    else if (action === 'set_assumptions') {
+    else if (action === 'launch_builder') {
       loadingStore.startLoading()
-      const response = await workflowApi.setAssumptions(projectId, assumptionName.value, {
-        discount_rate: discountRate.value,
-        mortality_table: mortalityTable.value
+      const preset = PRESET_TEMPLATES[selectedPresetId.value]
+      
+      // Save contract with preset nodes and edges
+      await workflowApi.addContract(projectId, `${preset.name} Contract`, selectedProductType.value || 'Term', {
+         nodes: preset.nodes,
+         edges: preset.edges
       })
-      state.value = response.data || response
-    } 
-    else if (action === 'run_valuation') {
-      loadingStore.startLoading()
-      const response = await workflowApi.runValuation(projectId)
-      state.value = response.data || response
-      if (state.value.job_id) {
-        startPolling(state.value.job_id)
-      }
+      
+      // Navigate to Visual Blueprint Builder
+      router.push(`/projects/${projectId}`)
     }
   } catch (err) {
     console.error(err)
-    // Error store will catch via interceptor, but we can also set it explicitly if needed
   } finally {
     loadingStore.stopLoading()
   }
@@ -116,10 +103,19 @@ const handleAction = async (action, data = null) => {
     
     <header class="h-16 shrink-0 border-b border-white/[0.08] bg-[#0F172A] flex items-center px-6 justify-between">
       <div class="flex items-center gap-3 cursor-pointer" @click="router.push('/')">
-        <div class="w-8 h-8 rounded bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center">
-          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-activity"><path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.48 12H2"/></svg>
+        <div class="h-10 w-10 rounded-xl flex-shrink-0 shadow-md border border-white/[0.05] relative overflow-hidden bg-[#070b14]">
+          <img src="/logo.jpg" alt="Actura Mascot" class="absolute w-[220%] h-[220%] max-w-none -bottom-[15%] -right-[20%]" />
         </div>
-        <h1 class="text-lg font-medium text-white tracking-wide">Valuation Wizard</h1>
+        <div class="min-w-0 flex-1">
+          <h1 class="text-sm font-semibold text-white tracking-tight">Actura</h1>
+          <p class="text-xs text-slate-500 font-medium truncate">Actuarial Valuation & Risk Platform</p>
+        </div>
+      </div>
+      <div>
+        <button @click="router.push('/')" class="btn-secondary text-sm px-4 py-2 flex items-center gap-2 border-slate-600 hover:border-slate-400">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-log-out"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/></svg>
+          Exit to Dashboard
+        </button>
       </div>
     </header>
 
@@ -141,9 +137,20 @@ const handleAction = async (action, data = null) => {
           </div>
         </div>
 
-        <div v-else class="w-full max-w-3xl pt-8">
+        <div v-else class="w-full max-w-3xl pt-8 relative">
+          
+          <!-- Shared Back Button -->
+          <button 
+             v-if="state.step === WorkflowStep.CONTRACT || state.step === WorkflowStep.BLUEPRINT"
+             @click="goBack"
+             class="absolute top-0 left-0 -mt-2 flex items-center text-sm font-medium text-slate-400 hover:text-white transition-colors"
+          >
+            <ChevronLeft class="w-4 h-4 mr-1" />
+            Back to previous step
+          </button>
+
           <!-- Step 1: Project -->
-          <div v-if="state.step === WorkflowStep.PROJECT" class="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <div v-if="state.step === WorkflowStep.PROJECT" class="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 mt-8">
             <div>
               <h2 class="text-3xl font-bold text-white mb-2">Create Project</h2>
               <p class="text-slate-400 text-lg">Name your actuarial project to get started.</p>
@@ -159,106 +166,59 @@ const handleAction = async (action, data = null) => {
             </div>
           </div>
 
-          <!-- Step 2: Contract -->
-          <div v-else-if="state.step === WorkflowStep.CONTRACT" class="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <!-- Step 2: Contract (Product Selection) -->
+          <div v-else-if="state.step === WorkflowStep.CONTRACT" class="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 mt-8">
             <div>
-              <h2 class="text-3xl font-bold text-white mb-2">Select Product</h2>
-              <p class="text-slate-400 text-lg">Choose the insurance product for this valuation.</p>
+              <h2 class="text-3xl font-bold text-white mb-2">Select Product Category</h2>
+              <p class="text-slate-400 text-lg">Choose the base product family for this valuation.</p>
             </div>
             <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <ProductCard type="WholeLife" title="Whole Life" description="Permanent life insurance with fixed premiums and guaranteed death benefit." @select="(type) => handleAction('create_contract', type)" />
-              <ProductCard type="Term" title="Term Life" description="Temporary coverage for a specified term (e.g. 10, 20, 30 years)." @select="(type) => handleAction('create_contract', type)" />
-              <ProductCard type="Annuity" title="Annuity" description="A stream of income payments for life or a specified period." @select="(type) => handleAction('create_contract', type)" />
+              <ProductCard type="WholeLife" title="Whole Life" description="Permanent life insurance with fixed premiums and guaranteed death benefit." @select="(type) => handleAction('select_product', type)" />
+              <ProductCard type="Term" title="Term Life" description="Temporary coverage for a specified term (e.g. 10, 20, 30 years)." @select="(type) => handleAction('select_product', type)" />
+              <ProductCard type="Annuity" title="Annuity" description="A stream of income payments for life or a specified period." @select="(type) => handleAction('select_product', type)" />
             </div>
           </div>
 
-          <!-- Step 3: Blueprint -->
-          <div v-else-if="state.step === WorkflowStep.BLUEPRINT" class="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+          <!-- Step 3: Blueprint (Preset Selection) -->
+          <div v-else-if="state.step === WorkflowStep.BLUEPRINT" class="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500 mt-8">
             <div>
-              <h2 class="text-3xl font-bold text-white mb-2">Build Blueprint</h2>
-              <p class="text-slate-400 text-lg">Design the cash flow projection graph.</p>
+              <h2 class="text-3xl font-bold text-white mb-2">Select Template</h2>
+              <p class="text-slate-400 text-lg">Pick a starter cash flow topology to launch into the Visual Builder.</p>
             </div>
-            <div class="card p-8 text-center space-y-4 border-dashed border-2 border-slate-700 bg-[#0F172A]/50">
-              <div class="w-16 h-16 rounded-full bg-indigo-500/10 text-indigo-400 flex items-center justify-center mx-auto mb-2">
-                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-network"><rect x="16" y="16" width="6" height="6" rx="1"/><rect x="2" y="16" width="6" height="6" rx="1"/><rect x="9" y="2" width="6" height="6" rx="1"/><path d="M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3"/><path d="M12 12V8"/></svg>
-              </div>
-              <h3 class="text-xl font-medium text-white">Open the Visual Builder</h3>
-              <p class="text-slate-400 max-w-md mx-auto">Use our node-based canvas to map out premiums, decrements, and benefits. The engine will validate your graph automatically.</p>
-              <button @click="handleAction('validate_blueprint')" class="btn-primary mt-2">
-                Launch Builder
-              </button>
-            </div>
-          </div>
-
-          <!-- Step 4: Assumptions -->
-          <div v-else-if="state.step === WorkflowStep.ASSUMPTIONS" class="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div>
-              <h2 class="text-3xl font-bold text-white mb-2">Configure Assumptions</h2>
-              <p class="text-slate-400 text-lg">Set the economic and biometric assumptions for the run.</p>
-            </div>
-            <div class="card p-6 space-y-5">
-              <div>
-                <label class="block text-sm font-medium text-slate-300 mb-1.5">Scenario Name</label>
-                <input v-model="assumptionName" type="text" class="input-field w-full" />
-              </div>
-              <div class="grid grid-cols-2 gap-4">
-                <div>
-                  <label class="block text-sm font-medium text-slate-300 mb-1.5">Discount Rate (%)</label>
-                  <input v-model.number="discountRate" type="number" step="0.01" class="input-field w-full" />
+            
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div 
+                 v-for="(preset, key) in PRESET_TEMPLATES" 
+                 :key="key"
+                 @click="selectPreset(key)"
+                 :class="[
+                   'rounded-xl p-5 cursor-pointer border-2 transition-all duration-200',
+                   selectedPresetId === key ? 'border-indigo-500 bg-indigo-500/10' : 'bg-slate-800 border-white/[0.06] hover:border-slate-500'
+                 ]"
+              >
+                <div class="flex justify-between items-start mb-2">
+                  <h3 class="text-lg font-bold text-white">{{ preset.name }}</h3>
+                  <span class="px-2 py-0.5 rounded text-[10px] font-mono bg-white/5 text-slate-400">{{ preset.badge }}</span>
                 </div>
-                <div>
-                  <label class="block text-sm font-medium text-slate-300 mb-1.5">Mortality Table</label>
-                  <select v-model="mortalityTable" class="input-field w-full">
-                    <option value="soa_ilt.csv">SOA Illustrative Life Table</option>
-                    <option value="cso_2001.csv">2001 CSO</option>
-                  </select>
+                <p class="text-sm text-slate-400 leading-relaxed line-clamp-2">
+                  {{ preset.description }}
+                </p>
+                <div class="mt-4 flex -space-x-2">
+                   <!-- Visual cue of nodes in preset -->
+                   <div v-for="i in Math.min(preset.nodes.length, 5)" :key="i" class="w-6 h-6 rounded bg-slate-800 border border-slate-700 flex items-center justify-center text-[8px] text-slate-500 shadow-sm z-[calc(5-i)]"></div>
+                   <div v-if="preset.nodes.length > 5" class="w-6 h-6 rounded bg-slate-800/50 border border-slate-700 flex items-center justify-center text-[10px] text-slate-500 z-0">+</div>
                 </div>
               </div>
-              <div class="pt-2 border-t border-slate-700/50 flex justify-end">
-                <button @click="handleAction('set_assumptions')" class="btn-primary px-6">
-                  Save & Continue
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Step 5: Running -->
-          <div v-else-if="state.step === WorkflowStep.RUNNING" class="space-y-6 flex flex-col items-center justify-center py-12 animate-in fade-in zoom-in-95 duration-500">
-            <div class="w-16 h-16 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-2 shadow-[0_0_15px_rgba(99,102,241,0.5)]"></div>
-            <h2 class="text-2xl font-bold text-white">Valuation in Progress</h2>
-            
-            <div class="w-full max-w-md mt-6">
-              <div class="flex justify-between text-sm text-slate-400 mb-2">
-                <span>{{ progress < 20 ? 'Preparing engine...' : progress < 90 ? 'Running Monte Carlo...' : 'Finalizing results...' }}</span>
-                <span>{{ Math.round(progress) }}%</span>
-              </div>
-              <div class="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
-                <div class="h-full bg-indigo-500 rounded-full transition-all duration-500 ease-out" :style="{ width: `${progress}%` }"></div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Step 6: Results -->
-          <div v-else-if="state.step === WorkflowStep.RESULTS" class="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div class="flex items-center justify-between">
-              <div>
-                <h2 class="text-3xl font-bold text-white mb-2">Valuation Results</h2>
-                <p class="text-slate-400 text-lg">Review the computed risk metrics.</p>
-              </div>
-              <button @click="router.push(`/projects/${projectId}`)" class="btn-secondary">
-                View Cash Flows
-              </button>
             </div>
             
-            <RiskAnalysis :data="state.result" />
-            
-            <div class="flex justify-end pt-4">
-              <button @click="router.push('/')" class="btn-primary flex items-center gap-2">
-                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-check-circle"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                Complete Workflow
+            <div class="pt-6 border-t border-slate-700/50 flex justify-end">
+              <button @click="handleAction('launch_builder')" class="btn-primary px-8 py-2.5 text-base flex items-center shadow-lg shadow-indigo-500/25">
+                Launch Visual Builder
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="ml-2 lucide lucide-arrow-right"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
               </button>
             </div>
           </div>
+
         </div>
       </main>
     </div>

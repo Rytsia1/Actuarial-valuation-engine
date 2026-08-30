@@ -70,7 +70,7 @@ class BlueprintValidator:
         
         # 1. Reachable from INPUT
         reachable_from_input: Set[str] = set()
-        input_nodes = [nid for nid, node in node_map.items() if node.type == NodeType.INPUT]
+        input_nodes = [nid for nid, node in node_map.items() if node.type == NodeType.POLICY_INPUT]
         
         def dfs_forward(node_id: str):
             reachable_from_input.add(node_id)
@@ -82,10 +82,7 @@ class BlueprintValidator:
             dfs_forward(inode)
 
         for nid, node in node_map.items():
-            if nid not in reachable_from_input and node.type != NodeType.INPUT:
-                # Some static nodes might not strictly need an INPUT if they just produce a table, 
-                # but let's enforce connectivity or warn. Actually, MORTALITY might not need INPUT.
-                # Let's enforce that every node must be connected to something. If it has no edges, it's disconnected.
+            if nid not in reachable_from_input and node.type != NodeType.POLICY_INPUT:
                 if len(adj_list[nid]) == 0 and len(reverse_adj_list[nid]) == 0:
                     raise BlueprintValidationError(f"Node '{node.type.value}' ({nid}) is completely disconnected.")
 
@@ -96,12 +93,10 @@ class BlueprintValidator:
             src_node = node_map[edge.source]
             tgt_node = node_map[edge.target]
 
-            if src_node.type == NodeType.OUTPUT:
-                raise BlueprintValidationError(f"Cannot connect OUTPUT node '{src_node.id}' to any other node.")
-            if tgt_node.type == NodeType.INPUT:
-                raise BlueprintValidationError(f"Cannot connect to an INPUT node '{tgt_node.id}'.")
-            if src_node.type == NodeType.PREMIUM and tgt_node.type == NodeType.MORTALITY:
-                raise BlueprintValidationError("Semantic mismatch: Cannot connect PREMIUM to MORTALITY.")
+            if src_node.type == NodeType.VALUATION_SINK:
+                raise BlueprintValidationError(f"Cannot connect VALUATION_SINK node '{src_node.id}' to any other node.")
+            if tgt_node.type == NodeType.POLICY_INPUT:
+                raise BlueprintValidationError(f"Cannot connect to an POLICY_INPUT node '{tgt_node.id}'.")
 
     @staticmethod
     def _check_missing_inputs(blueprint: Blueprint, node_map: Dict[str, 'Node'], reverse_adj_list: Dict[str, List[str]]) -> None:
@@ -110,30 +105,29 @@ class BlueprintValidator:
             incoming = reverse_adj_list[nid]
             incoming_types = {node_map[src].type for src in incoming}
 
-            if node.type == NodeType.BENEFIT:
-                if NodeType.INPUT not in incoming_types and NodeType.SURVIVAL not in incoming_types:
-                    raise BlueprintValidationError(f"Node 'BENEFIT' ({nid}) is disconnected. It requires incoming edges from 'INPUT' or 'SURVIVAL'.")
+            if node.type == NodeType.CONTINGENCY:
+                if NodeType.POLICY_INPUT not in incoming_types:
+                    raise BlueprintValidationError(f"Node 'CONTINGENCY' ({nid}) requires incoming edges from 'POLICY_INPUT'.")
             
-            elif node.type == NodeType.CASHFLOW:
-                if NodeType.BENEFIT not in incoming_types:
-                    raise BlueprintValidationError(f"Node 'CASHFLOW' ({nid}) requires an incoming edge from a 'BENEFIT' node.")
-                if NodeType.SURVIVAL not in incoming_types and NodeType.MORTALITY not in incoming_types:
-                    raise BlueprintValidationError(f"Node 'CASHFLOW' ({nid}) requires an incoming edge from a 'SURVIVAL' or 'MORTALITY' node.")
+            elif node.type == NodeType.OUTFLOW:
+                if not incoming_types:
+                    raise BlueprintValidationError(f"Node 'OUTFLOW' ({nid}) is disconnected. It requires an incoming edge.")
             
-            elif node.type == NodeType.DISCOUNT:
-                if NodeType.INPUT not in incoming_types and "discount_rate" not in node.config:
-                    raise BlueprintValidationError(f"Node 'DISCOUNT' ({nid}) requires an incoming 'INPUT' or a direct 'discount_rate' config.")
+            elif node.type == NodeType.VALUATION_SINK:
+                if not incoming_types:
+                    raise BlueprintValidationError(f"Node 'VALUATION_SINK' ({nid}) requires incoming edges from INFLOW or OUTFLOW nodes.")
 
     @staticmethod
     def _check_configuration(blueprint: Blueprint) -> None:
         """Validate config schemas for individual nodes."""
         for node in blueprint.nodes:
-            if node.type == NodeType.INPUT:
-                if "age" in node.config and not isinstance(node.config["age"], int):
-                    raise BlueprintValidationError(f"Node 'INPUT' ({node.id}) requires 'age' to be an integer.")
-                if "age" in node.config and node.config["age"] < 0:
-                    raise BlueprintValidationError(f"Node 'INPUT' ({node.id}) requires 'age' > 0.")
+            if node.type == NodeType.POLICY_INPUT:
+                if "issue_age" in node.config and not isinstance(node.config["issue_age"], int):
+                    raise BlueprintValidationError(f"Node 'POLICY_INPUT' ({node.id}) requires 'issue_age' to be an integer.")
+                if "issue_age" in node.config and node.config["issue_age"] < 0:
+                    raise BlueprintValidationError(f"Node 'POLICY_INPUT' ({node.id}) requires 'issue_age' > 0.")
                 
-            elif node.type == NodeType.MORTALITY:
-                if "table_path" not in node.config and "table_name" not in node.config:
-                    raise BlueprintValidationError(f"Node 'Mortality Table' at ID '{node.id}' is missing required config key 'table_name' or 'table_path'.")
+            elif node.type == NodeType.CONTINGENCY:
+                if "table_id" not in node.config:
+                    raise BlueprintValidationError(f"Node 'CONTINGENCY' at ID '{node.id}' is missing required config key 'table_id'.")
+

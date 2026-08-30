@@ -9,7 +9,7 @@ const emit = defineEmits(['select'])
 
 <template>
   <div 
-    class="card p-6 cursor-pointer hover:border-indigo-500 hover:bg-[#151f38] transition-all group text-left"
+    class="bg-slate-800 rounded-xl border-2 border-white/[0.06] p-6 cursor-pointer hover:border-indigo-500 hover:bg-[#151f38] transition-all group text-left"
     @click="emit('select', type)"
   >
     <div class="flex justify-between items-start mb-4">
