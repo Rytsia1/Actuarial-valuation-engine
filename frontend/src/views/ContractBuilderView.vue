@@ -40,6 +40,8 @@ import { useErrorStore } from '../stores/useErrorStore'
 import ErrorBanner from '../components/ErrorBanner.vue'
 import LoadingOverlay from '../components/LoadingOverlay.vue'
 import EmptyState from '../components/EmptyState.vue'
+import { useRoute } from 'vue-router'
+import { projectApi } from '../services/projectApi'
 
 // ────────────────────────────────────────────────────────────
 // Custom Node Registrations (markRaw for Vue reactivity performance)
@@ -65,6 +67,7 @@ const showResultsDrawer = ref(false)
 
 const loadingStore = useLoadingStore()
 const errorStore = useErrorStore()
+const route = useRoute()
 
 const { project, fitView, addNodes, onConnect, addEdges } = useVueFlow()
 
@@ -211,7 +214,6 @@ async function runSimulation() {
 
   try {
     const payload = {
-      contract_id: `GRAPH-${Date.now()}`,
       nodes: nodes.value.map((n) => ({
         id: n.id,
         type: n.type,
@@ -229,10 +231,29 @@ async function runSimulation() {
 
     loadingStore.updateStep('prepare', 'complete')
     loadingStore.updateStep('projection', 'active')
-
-    const res = await simulateContractGraph(payload)
+    
+    // Save blueprint to DB
+    const projectId = route.params.id
+    const saveResponse = await projectApi.saveBlueprint(projectId, "Draft Blueprint", payload)
+    const contract = saveResponse.data || saveResponse
     
     loadingStore.updateStep('projection', 'complete')
+    loadingStore.updateStep('stochastic', 'active')
+    
+    // Run Valuation
+    const runResponse = await projectApi.runValuation(projectId, contract.id)
+    const run = runResponse.data || runResponse
+    
+    // Fetch result
+    let res = null;
+    if (run.status === 'completed') {
+       const resultResponse = await projectApi.getValuationResult(projectId, run.id)
+       const resultData = resultResponse.data || resultResponse
+       res = resultData.result?.full_output || {}
+    } else {
+       throw new Error(`Valuation failed: ${run.status}`)
+    }
+
     loadingStore.updateStep('stochastic', 'complete')
     loadingStore.updateStep('risk', 'complete')
     loadingStore.updateStep('finalize', 'active')
@@ -362,9 +383,34 @@ function renderResultCharts() {
 // ────────────────────────────────────────────────────────────
 // Lifecycle
 // ────────────────────────────────────────────────────────────
-onMounted(() => {
-  // Initialize with Term Life 20Y Preset
-  loadPreset('term_life_20y')
+onMounted(async () => {
+  const projectId = route.params.id
+  if (projectId) {
+    try {
+      const response = await projectApi.listBlueprints(projectId)
+      const contracts = response.data || response
+      if (contracts && contracts.length > 0) {
+        const contract = contracts[0] // Load latest/first contract
+        const blueprint = contract.blueprint_json
+        
+        // Populate nodes and edges from blueprint
+        if (blueprint.nodes && blueprint.edges) {
+          nodes.value = blueprint.nodes
+          edges.value = blueprint.edges
+          nextTick(() => fitView({ padding: 0.2, duration: 400 }))
+        } else {
+          loadPreset('term_life_20y')
+        }
+      } else {
+        loadPreset('term_life_20y')
+      }
+    } catch (err) {
+      console.error("Failed to fetch blueprint:", err)
+      loadPreset('term_life_20y')
+    }
+  } else {
+    loadPreset('term_life_20y')
+  }
 
   resizeObserver = new ResizeObserver(() => {
     cashFlowChart?.resize()

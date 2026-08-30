@@ -1128,3 +1128,10 @@ from actuary_engine.core.exceptions import ActuraException
 from actuary_engine.api.middleware.error_handler import actura_exception_handler, generic_exception_handler
 app.add_exception_handler(ActuraException, actura_exception_handler)
 app.add_exception_handler(Exception, generic_exception_handler)
+
+from actuary_engine.api.routes.projects import router as projects_router
+from actuary_engine.api.routes.blueprints import router as blueprints_router
+from actuary_engine.api.routes.valuations import router as valuations_router
+app.include_router(projects_router, prefix='/api/v1')
+app.include_router(blueprints_router, prefix='/api/v1')
+app.include_router(valuations_router, prefix='/api/v1')

@@ -1,14 +1,35 @@
 version: '3.8'
 
 services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: actura_postgres
+    environment:
+      POSTGRES_USER: actura_user
+      POSTGRES_PASSWORD: actura_password
+      POSTGRES_DB: actura_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U actura_user -d actura_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build: .
     ports:
       - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       - PYTHONUNBUFFERED=1
       - PORT=${PORT:-8000}
       - MORTALITY_TABLE_PATH=/app/data/soa_ilt.csv
+      - DATABASE_URL=postgresql://actura_user:actura_password@postgres:5432/actura_db
     env_file:
       - .env
 
@@ -21,3 +42,6 @@ services:
       - "3000:80"
     depends_on:
       - backend
+
+volumes:
+  postgres_data:

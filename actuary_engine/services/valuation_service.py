@@ -1,59 +1,77 @@
-from actuary_engine.domain.pricing.insurance import InsurancePricer
-from actuary_engine.domain.tables.mortality_table import MortalityTable
-from actuary_engine.domain.tables.commutation import CommutationFunctions
-from actuary_engine.models.assumptions import InterestAssumption
-from actuary_engine.models.contracts import PolicyContract, ProductType
-from actuary_engine.core.config import settings
-from actuary_engine.core.exceptions import ValidationError
+from uuid import UUID
+from sqlalchemy.orm import Session
+from datetime import datetime, timezone
+from actuary_engine.infrastructure.repositories import ValuationRunRepository, ValuationResultRepository, AssumptionSetRepository
+from actuary_engine.services.blueprint_service import BlueprintService
+from actuary_engine.domain.blueprint.executor import BlueprintExecutor
+from actuary_engine.domain.blueprint.validator import BlueprintValidator
+from actuary_engine.core.exceptions import InvalidBlueprintError
+from actuary_engine.infrastructure.models import ValuationRun
 
 class ValuationService:
-    @staticmethod
-    def calculate(request_data: dict) -> dict:
-        age = request_data.get("age")
-        product_type_str = request_data.get("product_type")
-        benefit = request_data.get("benefit")
-        discount_rate = request_data.get("discount_rate", 0.05)
-        term = request_data.get("term")
+    def __init__(self, db: Session):
+        self.db = db
+        self.run_repo = ValuationRunRepository(db)
+        self.result_repo = ValuationResultRepository(db)
+        self.assumption_repo = AssumptionSetRepository(db)
+        self.blueprint_service = BlueprintService(db)
+        self.validator = BlueprintValidator()
+
+    def load_assumptions(self, assumption_set_id: UUID) -> dict:
+        if not assumption_set_id:
+            return {}
+        assumption_set = self.assumption_repo.get(assumption_set_id)
+        if not assumption_set:
+            return {}
+        return assumption_set.assumptions
+
+    def run_valuation(self, project_id: UUID, contract_id: UUID, assumption_set_id: UUID = None) -> ValuationRun:
+        """Execute a valuation and persist the results."""
+        # Load the blueprint
+        blueprint = self.blueprint_service.load_blueprint(contract_id)
         
-        try:
-            product_type = ProductType(product_type_str.lower())
-        except ValueError:
-            # If the product type string doesn't match EXACTLY "whole_life", "term", etc.,
-            # map from CamelCase or return error. 
-            # Request schema uses WholeLife, Term, Annuity
-            mapping = {
-                "WholeLife": ProductType.WHOLE_LIFE,
-                "Term": ProductType.TERM,
-                "Annuity": ProductType.PURE_ENDOWMENT # fallback
+        # Validate before execution
+        self.validator.validate(blueprint) # will raise if invalid
+        
+        assumptions = self.load_assumptions(assumption_set_id)
+        
+        # Create the valuation run
+        valuation_run = self.run_repo.create(
+            project_id=project_id,
+            contract_id=contract_id,
+            assumption_set_id=assumption_set_id,
+            input_snapshot={
+                "blueprint": blueprint.model_dump(),
+                "assumptions": assumptions,
             }
-            if product_type_str in mapping:
-                product_type = mapping[product_type_str]
-            else:
-                raise ValidationError(f"Product type {product_type_str} is not supported yet.")
-
-        # Instantiate mortality table using config
-        try:
-            mortality_table = MortalityTable(settings.MORTALITY_TABLE_PATH)
-        except Exception:
-            # Mock or fallback for tests if table file doesn't exist
-            # This is a bit of a hack, but it prevents file not found errors in tests
-            # if they mock it differently
-            mortality_table = MortalityTable("data/soa_ilt.csv") 
-
-        interest = InterestAssumption(annual_rate=discount_rate)
-        commutation = CommutationFunctions(table=mortality_table, interest=interest)
-        pricer = InsurancePricer(commutation=commutation)
-
-        contract = PolicyContract(
-            issue_age=age,
-            product_type=product_type,
-            term=term,
-            sum_assured=benefit
         )
         
         try:
-            bel = pricer.price_contract(contract)
-        except Exception as e:
-            raise ValidationError(str(e))
+            # Execute the blueprint
+            # Note: in a real implementation we would merge assumptions into the blueprint config
+            executor = BlueprintExecutor(blueprint)
+            result = executor.run()
             
-        return {"bel": bel}
+            # Save the result
+            valuation_result = self.result_repo.create(
+                valuation_run_id=valuation_run.id,
+                bel=result.get("total_bel", 0.0),
+                var_95=result.get("var_95"),
+                cvar_95=result.get("cvar_95"),
+                net_premium=result.get("annual_premium"),
+                full_output=result
+            )
+            
+            # Update run status
+            run = self.run_repo.update_status(valuation_run.id, "completed")
+            if run:
+                run.completed_at = datetime.now(timezone.utc)
+                if run.started_at:
+                    run.duration_seconds = (run.completed_at - run.started_at).total_seconds()
+                self.db.commit()
+            
+            return run
+            
+        except Exception as e:
+            self.run_repo.update_status(valuation_run.id, "failed", error=str(e))
+            raise
