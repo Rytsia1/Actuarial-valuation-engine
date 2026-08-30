@@ -23,6 +23,10 @@ class InvalidBlueprintError(ActuraException):
     error_code = ErrorCode.INVALID_BLUEPRINT
     default_message = "The blueprint contains invalid configuration."
 
+class WorkflowStateError(ActuraException):
+    error_code = ErrorCode.INVALID_WORKFLOW_STATE
+    default_message = "Invalid workflow state transition."
+
 class CycleDetectedError(ActuraException):
     error_code = ErrorCode.CYCLE_DETECTED
     default_message = "The blueprint contains a cycle and cannot be executed."

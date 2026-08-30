@@ -22,6 +22,9 @@ class ErrorCode(str, Enum):
     
     # Not Found
     NOT_FOUND = "NOT_FOUND"
+    
+    # Workflow
+    INVALID_WORKFLOW_STATE = "INVALID_WORKFLOW_STATE"
 
 class ErrorResponse(BaseModel):
     error: ErrorCode

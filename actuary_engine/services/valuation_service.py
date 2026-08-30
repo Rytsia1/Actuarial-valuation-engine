@@ -65,7 +65,7 @@ class ValuationService:
             # Update run status
             run = self.run_repo.update_status(valuation_run.id, "completed")
             if run:
-                run.completed_at = datetime.now(timezone.utc)
+                run.completed_at = datetime.utcnow()
                 if run.started_at:
                     run.duration_seconds = (run.completed_at - run.started_at).total_seconds()
                 self.db.commit()

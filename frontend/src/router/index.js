@@ -16,6 +16,11 @@ const routes = [
     component: ContractBuilderView,
   },
   {
+    path: '/wizard/:projectId?',
+    name: 'ValuationWizard',
+    component: () => import('../views/ValuationWizardView.vue'),
+  },
+  {
     path: '/terms',
     name: 'Terms',
     component: TermsOfService,

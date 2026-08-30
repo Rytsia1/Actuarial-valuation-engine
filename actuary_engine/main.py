@@ -1135,3 +1135,5 @@ from actuary_engine.api.routes.valuations import router as valuations_router
 app.include_router(projects_router, prefix='/api/v1')
 app.include_router(blueprints_router, prefix='/api/v1')
 app.include_router(valuations_router, prefix='/api/v1')
+from actuary_engine.api.routes.workflow import router as workflow_router
+app.include_router(workflow_router, prefix='/api/v1')
