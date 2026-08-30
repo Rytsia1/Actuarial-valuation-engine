@@ -42,7 +42,7 @@ const createProject = async () => {
     isLoading.value = true
     const response = await projectApi.create(name)
     const newProject = response.data || response
-    router.push(`/projects/${newProject.id}`)
+    router.push(`/wizard/${newProject.id}`)
   } catch (err) {
     console.error("Failed to create project", err)
   } finally {
@@ -52,7 +52,7 @@ const createProject = async () => {
 
 const openProject = (project) => {
   projectStore.setCurrentProject(project)
-  router.push(`/projects/${project.id}`)
+  router.push(`/wizard/${project.id}`)
 }
 </script>
 
@@ -70,9 +70,19 @@ const openProject = (project) => {
         </div>
         <h1 class="text-lg font-medium text-white tracking-wide">Actura Dashboard</h1>
       </div>
-      <button @click="createProject" class="h-9 px-4 rounded-md bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium transition-colors shadow-lg shadow-indigo-500/20">
-        New Project
-      </button>
+      
+      <div class="flex items-center gap-4">
+        <router-link to="/sandbox" class="text-sm font-medium text-slate-400 hover:text-white transition-colors flex items-center gap-2">
+          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-flask-conical"><path d="M10 2v7.31"/><path d="M14 9.3V1.99"/><path d="M8.5 2h7"/><path d="M14 9.3a6.5 6.5 0 1 1-4 0"/><path d="M5.52 16h12.96"/></svg>
+          Legacy Features (Sandbox)
+        </router-link>
+
+        <div class="w-px h-4 bg-white/[0.1]"></div>
+
+        <button @click="createProject" class="h-9 px-4 rounded-md bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium transition-colors shadow-lg shadow-indigo-500/20">
+          New Project
+        </button>
+      </div>
     </header>
 
     <!-- Main Content -->
