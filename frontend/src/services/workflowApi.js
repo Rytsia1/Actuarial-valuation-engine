@@ -3,11 +3,7 @@ import httpClient from '../api/httpClient'
 export const WorkflowStep = {
   PROJECT: 'project',
   CONTRACT: 'contract',
-  BLUEPRINT: 'blueprint',
-  ASSUMPTIONS: 'assumptions',
-  VALIDATION: 'validation',
-  RUNNING: 'running',
-  RESULTS: 'results'
+  BLUEPRINT: 'blueprint'
 }
 
 export const workflowApi = {

@@ -12,10 +12,7 @@ const props = defineProps({
 const steps = [
   { id: WorkflowStep.PROJECT, label: 'Project Setup' },
   { id: WorkflowStep.CONTRACT, label: 'Product Selection' },
-  { id: WorkflowStep.BLUEPRINT, label: 'Graph Blueprint' },
-  { id: WorkflowStep.ASSUMPTIONS, label: 'Assumptions' },
-  { id: WorkflowStep.RUNNING, label: 'Valuation Run' },
-  { id: WorkflowStep.RESULTS, label: 'Results & Risk' }
+  { id: WorkflowStep.BLUEPRINT, label: 'Preset Template' }
 ]
 
 const currentIndex = computed(() => {

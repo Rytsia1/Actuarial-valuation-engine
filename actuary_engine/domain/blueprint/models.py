@@ -4,21 +4,22 @@ from typing import List, Dict, Any, Optional
 from enum import Enum
 
 class NodeType(str, Enum):
-    INPUT = "input"
-    PREMIUM = "premium"
-    EXPENSE = "expense"
-    MORTALITY = "mortality"
-    SURVIVAL = "survival"
-    BENEFIT = "benefit"
-    CASHFLOW = "cashflow"
-    DISCOUNT = "discount"
-    OUTPUT = "output"
+    POLICY_INPUT = "policyInput"
+    INFLOW = "inflow"
+    OUTFLOW = "outflow"
+    CONTINGENCY = "contingency"
+    ACCUMULATOR = "accumulator"
+    VALUATION_SINK = "valuationSink"
 
 class Node(BaseModel):
     id: str = Field(..., description="Unique UUID or slug")
     type: NodeType
-    config: Dict[str, Any] = Field(default_factory=dict, description="Configuration parameters for the node")
+    config: Dict[str, Any] = Field(default_factory=dict, alias="data", description="Configuration parameters for the node")
     position: Optional[Dict[str, float]] = Field(default=None, description="Visual position for UI, ignored by engine")
+    
+    class Config:
+        populate_by_name = True
+
 
 class Edge(BaseModel):
     id: str
