@@ -10,8 +10,8 @@ export const projectApi = {
   get: (id) =>
     httpClient.get(`/projects/${id}`),
 
-  update: (id, name, description) =>
-    httpClient.put(`/projects/${id}`, { name, description }),
+  update: (id, data) =>
+    httpClient.put(`/projects/${id}`, data),
 
   delete: (id) =>
     httpClient.delete(`/projects/${id}`),

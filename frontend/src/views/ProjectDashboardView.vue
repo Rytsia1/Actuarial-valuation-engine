@@ -15,6 +15,9 @@ const errorStore = useErrorStore()
 const projects = ref([])
 const isLoading = ref(true)
 
+const showModeModal = ref(false)
+const selectedProject = ref(null)
+
 onMounted(async () => {
   projectStore.clearStore()
   errorStore.clearError()
@@ -28,7 +31,6 @@ const loadProjects = async () => {
     projects.value = response.data || response // depending on axios setup
   } catch (err) {
     console.error("Failed to load projects", err)
-    // Error is handled by global interceptor + useErrorStore
   } finally {
     isLoading.value = false
   }
@@ -51,8 +53,63 @@ const createProject = async () => {
 }
 
 const openProject = (project) => {
-  projectStore.setCurrentProject(project)
-  router.push(`/wizard/${project.id}`)
+  selectedProject.value = project
+  showModeModal.value = true
+}
+
+const proceedToBuilder = () => {
+  if (!selectedProject.value) return
+  projectStore.setCurrentProject(selectedProject.value)
+  router.push(`/wizard/${selectedProject.value.id}`)
+}
+
+const proceedToSandbox = () => {
+  if (!selectedProject.value) return
+  // We can pass project ID via query or just let the sandbox be standalone
+  projectStore.setCurrentProject(selectedProject.value)
+  router.push(`/sandbox`)
+}
+
+const togglePin = async (project, event) => {
+  event.stopPropagation()
+  try {
+    isLoading.value = true
+    await projectApi.update(project.id, { is_pinned: !project.is_pinned })
+    await loadProjects()
+  } catch (err) {
+    console.error(err)
+    isLoading.value = false
+  }
+}
+
+const renameProject = async (project, event) => {
+  event.stopPropagation()
+  const newName = prompt('Enter new project name:', project.name)
+  if (!newName || newName === project.name) return
+  
+  try {
+    isLoading.value = true
+    await projectApi.update(project.id, { name: newName })
+    await loadProjects()
+  } catch (err) {
+    console.error(err)
+    isLoading.value = false
+  }
+}
+
+const deleteProject = async (project, event) => {
+  event.stopPropagation()
+  const confirmed = confirm(`Are you sure you want to delete "${project.name}"?`)
+  if (!confirmed) return
+  
+  try {
+    isLoading.value = true
+    await projectApi.delete(project.id)
+    await loadProjects()
+  } catch (err) {
+    console.error(err)
+    isLoading.value = false
+  }
 }
 </script>
 
@@ -72,13 +129,6 @@ const openProject = (project) => {
       </div>
       
       <div class="flex items-center gap-4">
-        <router-link to="/sandbox" class="text-sm font-medium text-slate-400 hover:text-white transition-colors flex items-center gap-2">
-          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-flask-conical"><path d="M10 2v7.31"/><path d="M14 9.3V1.99"/><path d="M8.5 2h7"/><path d="M14 9.3a6.5 6.5 0 1 1-4 0"/><path d="M5.52 16h12.96"/></svg>
-          Legacy Features (Sandbox)
-        </router-link>
-
-        <div class="w-px h-4 bg-white/[0.1]"></div>
-
         <button @click="createProject" class="h-9 px-4 rounded-md bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-medium transition-colors shadow-lg shadow-indigo-500/20">
           New Project
         </button>
@@ -106,11 +156,31 @@ const openProject = (project) => {
             v-for="project in projects" 
             :key="project.id"
             @click="openProject(project)"
-            class="group cursor-pointer rounded-xl border border-white/[0.08] bg-[#0F172A] p-6 hover:border-indigo-500/50 hover:bg-[#151f38] transition-all duration-300 hover:shadow-xl hover:shadow-indigo-500/10 flex flex-col h-48"
+            class="group cursor-pointer rounded-xl border border-white/[0.08] bg-[#0F172A] p-6 hover:border-indigo-500/50 hover:bg-[#151f38] transition-all duration-300 hover:shadow-xl hover:shadow-indigo-500/10 flex flex-col h-48 relative"
           >
+            <!-- Pin Indicator -->
+            <div v-if="project.is_pinned" class="absolute -top-2 -right-2 bg-indigo-500 rounded-full p-1.5 shadow-lg shadow-indigo-500/30">
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="white" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-pin"><line x1="12" x2="12" y1="17" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.68V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3v4.68a2 2 0 0 1-1.11 1.87l-1.78.89A2 2 0 0 0 5 15.24Z"/></svg>
+            </div>
+
             <div class="flex items-start justify-between mb-4">
-              <h3 class="text-lg font-medium text-slate-200 group-hover:text-indigo-400 transition-colors">{{ project.name }}</h3>
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-arrow-right text-slate-500 opacity-0 group-hover:opacity-100 group-hover:translate-x-1 transition-all"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+              <h3 class="text-lg font-medium text-slate-200 group-hover:text-indigo-400 transition-colors truncate pr-2">{{ project.name }}</h3>
+              
+              <!-- Action Menu / Icons -->
+              <div class="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <!-- Pin -->
+                <button @click="togglePin(project, $event)" class="text-slate-500 hover:text-indigo-400 p-1 rounded hover:bg-white/[0.05]" title="Pin Project">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-pin"><line x1="12" x2="12" y1="17" y2="22"/><path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.68V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3v4.68a2 2 0 0 1-1.11 1.87l-1.78.89A2 2 0 0 0 5 15.24Z"/></svg>
+                </button>
+                <!-- Rename -->
+                <button @click="renameProject(project, $event)" class="text-slate-500 hover:text-amber-400 p-1 rounded hover:bg-white/[0.05]" title="Rename Project">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-edit-2"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>
+                </button>
+                <!-- Delete -->
+                <button @click="deleteProject(project, $event)" class="text-slate-500 hover:text-rose-400 p-1 rounded hover:bg-white/[0.05]" title="Delete Project">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-trash-2"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>
+                </button>
+              </div>
             </div>
             
             <p class="text-slate-400 text-sm flex-1 line-clamp-3">
@@ -127,5 +197,41 @@ const openProject = (project) => {
         </div>
       </div>
     </main>
+
+    <!-- Mode Selection Modal -->
+    <div v-if="showModeModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div class="bg-[#0F172A] border border-white/[0.1] rounded-2xl p-8 max-w-2xl w-full mx-4 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200">
+        <button @click="showModeModal = false" class="absolute top-4 right-4 text-slate-500 hover:text-white transition-colors">
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+        
+        <div class="text-center mb-8">
+          <h2 class="text-2xl font-semibold text-white tracking-tight mb-2">Open "{{ selectedProject?.name }}"</h2>
+          <p class="text-slate-400">Choose your workspace mode for this project. You can always switch modes later.</p>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <!-- Wizard / Blueprint Builder Option -->
+          <button @click="proceedToBuilder" class="group relative flex flex-col items-center text-center p-6 rounded-xl border border-white/[0.08] bg-[#151f38] hover:border-indigo-500/50 hover:bg-[#1a2542] transition-all duration-300">
+            <div class="h-12 w-12 rounded-full bg-indigo-500/10 flex items-center justify-center text-indigo-400 mb-4 group-hover:scale-110 transition-transform">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-git-merge"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/></svg>
+            </div>
+            <h3 class="text-lg font-medium text-white mb-2">Visual Blueprint Builder</h3>
+            <p class="text-sm text-slate-400 leading-relaxed">Design cash flow logic visually using the DAG canvas and step-by-step wizard.</p>
+            <div class="absolute inset-0 border-2 border-transparent group-hover:border-indigo-500/30 rounded-xl transition-colors pointer-events-none"></div>
+          </button>
+
+          <!-- Legacy Sandbox Option -->
+          <button @click="proceedToSandbox" class="group relative flex flex-col items-center text-center p-6 rounded-xl border border-white/[0.08] bg-[#151f38] hover:border-emerald-500/50 hover:bg-[#1a2542] transition-all duration-300">
+            <div class="h-12 w-12 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-400 mb-4 group-hover:scale-110 transition-transform">
+              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-flask-conical"><path d="M10 2v7.31"/><path d="M14 9.3V1.99"/><path d="M8.5 2h7"/><path d="M14 9.3a6.5 6.5 0 1 1-4 0"/><path d="M5.52 16h12.96"/></svg>
+            </div>
+            <h3 class="text-lg font-medium text-white mb-2">Legacy Sandbox</h3>
+            <p class="text-sm text-slate-400 leading-relaxed">Classic actuarial tools: deterministic models, sensitivity analysis, and IFRS17.</p>
+            <div class="absolute inset-0 border-2 border-transparent group-hover:border-emerald-500/30 rounded-xl transition-colors pointer-events-none"></div>
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
