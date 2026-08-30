@@ -1122,4 +1122,9 @@ def simulate_contract_graph(payload: ContractGraphPayload) -> SimulateGraphRespo
 
 
 from actuary_engine.api.routes.blueprint import router as blueprint_router
-app.include_router(blueprint_router)
+app.include_router(blueprint_router, prefix="/api/v1/blueprint")
+
+from actuary_engine.core.exceptions import ActuraException
+from actuary_engine.api.middleware.error_handler import actura_exception_handler, generic_exception_handler
+app.add_exception_handler(ActuraException, actura_exception_handler)
+app.add_exception_handler(Exception, generic_exception_handler)

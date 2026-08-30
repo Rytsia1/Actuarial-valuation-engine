@@ -34,7 +34,12 @@ import ValuationSinkNode from '../components/nodes/ValuationSinkNode.vue'
 import AccumulatorNode from '../components/nodes/AccumulatorNode.vue'
 
 import { PRESET_TEMPLATES, layoutGraph } from '../utils/presets'
-import { simulateContractGraph } from '../services/actuaryApi'
+import { simulateContractGraph, ActuaryApiError } from '../services/actuaryApi'
+import { useLoadingStore } from '../stores/useLoadingStore'
+import { useErrorStore } from '../stores/useErrorStore'
+import ErrorBanner from '../components/ErrorBanner.vue'
+import LoadingOverlay from '../components/LoadingOverlay.vue'
+import EmptyState from '../components/EmptyState.vue'
 
 // ────────────────────────────────────────────────────────────
 // Custom Node Registrations (markRaw for Vue reactivity performance)
@@ -56,8 +61,10 @@ const nodes = ref([])
 const edges = ref([])
 const isSimulating = ref(false)
 const simulationResult = shallowRef(null)
-const simulationError = ref(null)
 const showResultsDrawer = ref(false)
+
+const loadingStore = useLoadingStore()
+const errorStore = useErrorStore()
 
 const { project, fitView, addNodes, onConnect, addEdges } = useVueFlow()
 
@@ -75,7 +82,7 @@ function loadPreset(presetKey) {
   if (!template) return
 
   selectedPresetId.value = presetKey
-  simulationError.value = null
+  errorStore.clearError()
 
   // Clone nodes and edges to avoid mutation
   const rawNodes = JSON.parse(JSON.stringify(template.nodes))
@@ -186,12 +193,14 @@ onConnect((params) => {
 // ────────────────────────────────────────────────────────────
 async function runSimulation() {
   if (nodes.value.length === 0) {
-    simulationError.value = 'Canvas is empty. Add nodes or load a preset template.'
+    errorStore.setError({ code: 'EMPTY_BLUEPRINT', message: 'Canvas is empty. Add nodes or load a preset template.' })
     return
   }
 
   isSimulating.value = true
-  simulationError.value = null
+  errorStore.clearError()
+  loadingStore.startLoading()
+  loadingStore.updateStep('prepare', 'active')
 
   // Update sink nodes with loading indicator
   nodes.value.forEach((node) => {
@@ -218,7 +227,16 @@ async function runSimulation() {
       })),
     }
 
+    loadingStore.updateStep('prepare', 'complete')
+    loadingStore.updateStep('projection', 'active')
+
     const res = await simulateContractGraph(payload)
+    
+    loadingStore.updateStep('projection', 'complete')
+    loadingStore.updateStep('stochastic', 'complete')
+    loadingStore.updateStep('risk', 'complete')
+    loadingStore.updateStep('finalize', 'active')
+
     simulationResult.value = res
     showResultsDrawer.value = true
 
@@ -236,12 +254,23 @@ async function runSimulation() {
       }
     })
 
+    loadingStore.updateStep('finalize', 'complete')
     await nextTick()
     renderResultCharts()
   } catch (err) {
     console.error('Graph simulation error:', err)
-    simulationError.value = err.message || 'Failed to simulate contract logic graph.'
+    loadingStore.updateStep('projection', 'error')
+    loadingStore.updateStep('stochastic', 'error')
+    loadingStore.updateStep('risk', 'error')
+    loadingStore.updateStep('finalize', 'error')
+    
+    if (err instanceof ActuaryApiError) {
+      errorStore.setError(err)
+    } else {
+      errorStore.setError({ message: err.message || 'Failed to simulate contract logic graph.' })
+    }
   } finally {
+    loadingStore.stopLoading()
     isSimulating.value = false
     nodes.value.forEach((node) => {
       if (node.type === 'valuationSink') {
@@ -355,6 +384,7 @@ onUnmounted(() => {
 
 <template>
   <div class="h-[calc(100vh-80px)] flex flex-col bg-[#0B0F19] text-slate-100 overflow-hidden relative">
+    <LoadingOverlay />
 
     <!-- ═══════════════════════════════════════════════════════ -->
     <!-- 1. TOP TOOLBAR & PRESET SELECTOR                        -->
@@ -421,16 +451,7 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <!-- Error Banner -->
-    <div v-if="simulationError" class="px-6 py-2 bg-rose-500/10 border-b border-rose-500/20 text-rose-400 text-xs flex items-center justify-between">
-      <div class="flex items-center space-x-2">
-        <span class="h-2 w-2 rounded-full bg-rose-400 animate-pulse"></span>
-        <span>{{ simulationError }}</span>
-      </div>
-      <button @click="simulationError = null" class="text-slate-400 hover:text-white p-1">
-        <X class="w-3.5 h-3.5" />
-      </button>
-    </div>
+    <ErrorBanner />
 
     <!-- ═══════════════════════════════════════════════════════ -->
     <!-- 2. MAIN WORKSPACE: PALETTE + CANVAS                     -->
@@ -472,6 +493,17 @@ onUnmounted(() => {
 
       <!-- Center: Vue Flow Canvas -->
       <main class="flex-1 h-full relative" @drop="onDrop" @dragover="onDragOver">
+        <div v-if="nodes.length === 0" class="absolute inset-0 z-10 flex items-center justify-center pointer-events-none">
+          <EmptyState 
+            title="Canvas is Empty" 
+            description="Drag nodes from the palette on the left to start building your actuarial blueprint."
+            class="pointer-events-auto"
+          >
+            <template #icon>
+              <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-box select-none"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="m3.3 7 8.7 5 8.7-5"/><path d="M12 22V12"/></svg>
+            </template>
+          </EmptyState>
+        </div>
         <VueFlow
           v-model:nodes="nodes"
           v-model:edges="edges"
